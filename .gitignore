@@ -3,3 +3,4 @@ node_modules/
 *.log
 test/output/
 .DS_Store
+release/

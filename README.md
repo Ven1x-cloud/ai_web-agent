@@ -14,12 +14,14 @@ Het "brein" is een taalmodel via OpenRouter (of, als je wilt, een lokaal model v
 
 ---
 
+🌐 **Website met uitleg en download:** <https://ven1x-cloud.github.io/ai_web-agent/>
+
 ## Installatie (5 minuten)
 
-1. **Download de code**: klik op GitHub op *Code → Download ZIP* en pak het uit (of `git clone` deze repo).
+1. **Download** [`ai-web-agent.zip`](https://github.com/Ven1x-cloud/ai_web-agent/releases/latest/download/ai-web-agent.zip) (nieuwste release) en pak het uit. *(Ontwikkelaars: `git clone` en gebruik de map `extension/`.)*
 2. Open in Chrome/Edge/Brave: `chrome://extensions` (Edge: `edge://extensions`).
 3. Zet rechtsboven **Ontwikkelaarsmodus** aan.
-4. Klik **Uitgepakte extensie laden** en kies de map **`extension`** uit de download.
+4. Klik **Uitgepakte extensie laden** en kies de uitgepakte map (waar `manifest.json` in staat).
 5. De instellingenpagina opent vanzelf. Pin het icoon in je werkbalk (puzzelstukje → speld).
 
 ### OpenRouter-sleutel (gratis)
@@ -94,8 +96,11 @@ extension/
   options/               Instellingenpagina
   lib/                   OpenRouter-client (streaming + tool calls), instellingen, prompts, zoeken (DuckDuckGo/Bing, URL → tekst)
   vendor/                marked, DOMPurify, KaTeX (gekopieerd uit node_modules met `npm run vendor`)
-scripts/                 copy-vendor.mjs, check.mjs, make-icons.py
+scripts/                 copy-vendor.mjs, check.mjs, package.mjs (release-ZIP), make-icons.py
 test/e2e.mjs             End-to-end test zonder browser: jsdom speelt de pagina + het content-script, een nep-OpenRouter speelt het model
+docs/                    Website (GitHub Pages) + privacyverklaring
+store/                   Winkelteksten, permissiemotivaties en promo-afbeeldingen voor Chrome Web Store / Edge Add-ons
+.github/workflows/       release.yml: bij een tag `v*` tests draaien, ZIP bouwen en GitHub-release maken
 ```
 
 - De agent draait in het zijpaneel (extensiepagina): daar zijn `fetch`-streaming, `DOMParser`, canvas en alle `chrome.*`-API's beschikbaar.
@@ -108,8 +113,13 @@ npm install          # dev-dependencies (eslint, jsdom, libs voor vendor)
 npm run vendor       # vendor-bestanden verversen na een update van marked/dompurify/katex
 npm run check        # manifest + verwijzingen + eslint
 npm test             # e2e-tests (jsdom + nep-OpenRouter)
+npm run package      # release/ai-web-agent.zip bouwen (voor winkels of een GitHub-release)
 python3 scripts/make-icons.py   # iconen opnieuw genereren (Pillow)
 ```
+
+### Publiceren
+
+Zie [PUBLICEREN.md](PUBLICEREN.md): gratis via de website + GitHub-releases (staat klaar), gratis via **Microsoft Edge Add-ons**, of via de **Chrome Web Store** (eenmalig $5, alleen per betaalkaart).
 
 ## Foutmeldingen: wat betekent wat?
 
