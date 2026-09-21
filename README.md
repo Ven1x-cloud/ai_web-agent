@@ -30,6 +30,8 @@ Het "brein" is een taalmodel via OpenRouter (of, als je wilt, een lokaal model v
 2. Ga naar [Keys](https://openrouter.ai/settings/keys) → *Create key* → kopieer de sleutel (`sk-or-v1-…`).
 3. Plak hem in het zijpaneel of op de instellingenpagina van de extensie. Klaar.
 
+> **Jonger dan 18?** OpenRouter eist in zijn voorwaarden dat de accounthouder 18+ is. Laat dan een ouder/verzorger het account en de sleutel aanmaken (gratis, 5 minuten) – zie de [uitleg voor ouders](https://ven1x-cloud.github.io/ai_web-agent/ouders.html). Zonder account werken kan ook, met [Ollama](#eigen-ai-op-je-eigen-pc-optioneel) op je eigen pc.
+>
 > Zonder tegoed: **50 vragen per dag** (max 20 per minuut) met een gratis model.
 > Als er ooit éénmalig **$10 tegoed** wordt gekocht (bankpas/creditcard, Apple Pay of crypto – geen iDEAL of paysafecard, en prepaid kaarten zijn in NL niet meer in winkels te koop): **1000 gratis vragen per dag** én $10 voor de sterke betaalde modellen (Gemini 3.5 Flash, GPT-5.2, Claude…). Een gemiddelde vraag met paginatekst kost bij Gemini 3.5 Flash minder dan een cent.
 

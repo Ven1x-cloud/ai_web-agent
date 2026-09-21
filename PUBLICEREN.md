@@ -9,6 +9,12 @@ dat is gratis en staat al klaar.
 | **2. Microsoft Edge Add-ons** | € 0 (registratie is gratis) | Edge-gebruikers, met één klik | ± 1 uur + wachten op review |
 | **3. Chrome Web Store** | eenmalig $ 5 (≈ € 4,50), alleen per bankpas/creditcard, 18+ | Chrome-, Edge-, Brave-gebruikers | ± 1 uur + wachten op review |
 
+> **Jonger dan 18?** Zowel Microsoft Partner Center als de Chrome Web Store zijn contracten die een volwassene moet
+> aangaan, en ook OpenRouter eist in zijn voorwaarden 18+. Vraag een ouder/verzorger om die accounts op zijn/haar naam te
+> zetten; het uploaden en de winkelteksten kun je daarna zelf doen. Er is een kant-en-klare uitlegpagina:
+> <https://ven1x-cloud.github.io/ai_web-agent/ouders.html> (bron: `docs/ouders.html`). Route 1 (website + ZIP) heeft
+> geen enkel account nodig.
+>
 > **Over de $5 van Google:** die kun je niet met contant geld of een cadeaukaart betalen; Google Payments
 > accepteert alleen een betaalkaart en het account moet van een volwassene zijn. De praktische route is
 > dat een ouder/verzorger het developer-account op zijn/haar naam aanmaakt en de $5 betaalt – het is eenmalig,
