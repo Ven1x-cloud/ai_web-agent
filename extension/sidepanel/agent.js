@@ -45,10 +45,24 @@ function stripPageContext(text) {
   return `[Page context omitted (older turn) — was: ${urlLine}]\n` + rest;
 }
 
-function stripInternal(body) {
-  const { _retried, ...rest } = body;
-  return rest;
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new DOMException("Gestopt", "AbortError"));
+    const t = setTimeout(() => { signal?.removeEventListener("abort", onAbort); resolve(); }, ms);
+    const onAbort = () => { clearTimeout(t); reject(new DOMException("Gestopt", "AbortError")); };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
+
+/** Hoe lang wachten voor een nieuwe poging (ms). Bij een minuutlimiet langer, en Retry-After respecteren. */
+function retryWait(err, base) {
+  const ra = Number(err.retryAfter);
+  if (Number.isFinite(ra) && ra > 0) return Math.min(ra * 1000, 30_000);
+  if (err.kind === "minute_limit") return Math.max(base, 15_000);
+  return base;
+}
+
+export const DEFAULT_RETRY_DELAYS = [2000, 5000];
 
 /** Verwijdert interne velden voordat berichten naar de API gaan. */
 function toApiMessages(messages) {
@@ -62,57 +76,68 @@ function toApiMessages(messages) {
  * @param {Array} p.history  eerdere berichten (API-formaat, zonder system)
  * @param {Array} p.userContent  content-array voor het nieuwe user-bericht
  * @param {object} p.ctx  { getTabId, setTabId, windowId, tabTitle, tabUrl }
- * @param {object} p.ui  callbacks: onText, onReasoning, onToolStart, onToolEnd, onStep
+ * @param {object} p.ui  callbacks: onText, onReasoning, onToolStart, onToolEnd, onStep, onRetry
  * @param {AbortSignal} p.signal
+ * @param {number[]} [p.retryDelays]  wachttijden (ms) voor automatische nieuwe pogingen bij drukte; lengte = max. aantal extra pogingen
  * @returns {Promise<{messages:Array, content:string, cost:number, model:string, steps:number, truncated:boolean}>}  messages = nieuwe assistant/tool-berichten (zonder het user-bericht)
  */
-export async function runAgent({ settings, history, userContent, ctx, ui = {}, signal }) {
+export async function runAgent({ settings, history, userContent, ctx, ui = {}, signal, retryDelays = DEFAULT_RETRY_DELAYS }) {
   const system = { role: "system", content: buildSystemPrompt(settings, { tabTitle: ctx.tabTitle, tabUrl: ctx.tabUrl }) };
   const newMessages = [{ role: "user", content: userContent }];
   const tools = buildTools(settings);
-  const fallbacks = parseModelList(settings.fallbackModels).filter((m) => m !== settings.model);
+  const isOpenRouter = /openrouter\.ai/.test(settings.baseUrl || "");
+  // Kandidaat-modellen: het gekozen model eerst, dan de reserve-modellen. Bij drukte (429/5xx) schuift de lijst door.
+  let candidates = [...new Set([settings.model, ...parseModelList(settings.fallbackModels)].filter(Boolean))];
   let cost = 0, usedModel = "", steps = 0, finalContent = "", truncated = false;
   const maxSteps = Math.max(1, Math.min(25, Number(settings.maxSteps) || 10));
+
+  const call = (body) => streamChat({ baseUrl: settings.baseUrl, apiKey: settings.apiKey, body, signal }, {
+    onText: (_d, full) => ui.onText?.(full),
+    onReasoning: (_d, full) => ui.onReasoning?.(full),
+    onToolCallStart: (name) => ui.onToolPending?.(name),
+  });
 
   while (steps < maxSteps) {
     if (signal?.aborted) throw new DOMException("Gestopt", "AbortError");
     steps++;
     ui.onStep?.(steps, maxSteps);
     const messages = [system, ...toApiMessages([...compactHistory(history), ...newMessages])];
-    const body = {
-      model: settings.model,
-      messages,
-      tools,
-      tool_choice: "auto",
-      temperature: Number.isFinite(Number(settings.temperature)) ? Number(settings.temperature) : 0.4,
-      usage: { include: true },
-    };
-    if (fallbacks.length && /openrouter\.ai/.test(settings.baseUrl)) body.models = [settings.model, ...fallbacks];
-    if (settings.reasoning && settings.reasoning !== "auto") body.reasoning = { effort: settings.reasoning };
     if (steps === maxSteps) {
       // Laatste stap: dwing een eindantwoord af.
-      body.tool_choice = "none";
       messages.push({ role: "system", content: "Tool budget exhausted. Answer the user now with what you have, and say what you could not verify." });
     }
 
     let result;
-    try {
-      result = await streamChat({ baseUrl: settings.baseUrl, apiKey: settings.apiKey, body, signal }, {
-        onText: (_d, full) => ui.onText?.(full),
-        onReasoning: (_d, full) => ui.onReasoning?.(full),
-        onToolCallStart: (name) => ui.onToolPending?.(name),
-      });
-    } catch (e) {
-      // Sommige providers weigeren `reasoning`/`models`/`usage`/`temperature`; probeer één keer met een minimale body.
-      if (e instanceof ApiError && e.status === 400 && !body._retried) {
-        for (const k of ["reasoning", "models", "usage", "temperature"]) delete body[k];
-        body._retried = true;
-        result = await streamChat({ baseUrl: settings.baseUrl, apiKey: settings.apiKey, body: stripInternal(body), signal }, {
-          onText: (_d, full) => ui.onText?.(full),
-          onReasoning: (_d, full) => ui.onReasoning?.(full),
-          onToolCallStart: (name) => ui.onToolPending?.(name),
-        });
-      } else throw e;
+    let attempt = 0;
+    let minimalBody = false; // na een 400: zonder reasoning/models/usage/temperature
+    while (true) {
+      const body = { model: candidates[0], messages, tools, tool_choice: steps === maxSteps ? "none" : "auto" };
+      if (!minimalBody) {
+        body.temperature = Number.isFinite(Number(settings.temperature)) ? Number(settings.temperature) : 0.4;
+        body.usage = { include: true };
+        if (candidates.length > 1 && isOpenRouter) body.models = candidates; // server-side reserve-modellen
+        if (settings.reasoning && settings.reasoning !== "auto") body.reasoning = { effort: settings.reasoning };
+      }
+      try {
+        result = await call(body);
+        break;
+      } catch (e) {
+        if (!(e instanceof ApiError) || signal?.aborted) throw e;
+        // Sommige providers weigeren `reasoning`/`models`/`usage`/`temperature`; probeer één keer met een minimale body.
+        if (e.status === 400 && !minimalBody) { minimalBody = true; continue; }
+        // Drukte bij de aanbieder (429 "Provider returned error", 5xx) of minuutlimiet: even wachten en
+        // met het volgende model verder. De daglimiet (50/dag) is definitief → direct melden.
+        if (e.transient && attempt < retryDelays.length) {
+          const waitMs = retryWait(e, retryDelays[attempt]);
+          attempt++;
+          const from = candidates[0];
+          if (e.kind !== "minute_limit" && candidates.length > 1) candidates = [...candidates.slice(1), from];
+          ui.onRetry?.({ attempt, max: retryDelays.length, from, to: candidates[0], waitMs, error: e });
+          await sleep(waitMs, signal);
+          continue;
+        }
+        throw e;
+      }
     }
     if (result.usage?.cost) cost += Number(result.usage.cost) || 0;
     if (result.model) usedModel = result.model;

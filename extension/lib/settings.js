@@ -20,7 +20,7 @@ export const DEFAULTS = {
   apiKey: "",
   baseUrl: DEFAULT_BASE_URL,
   model: "qwen/qwen3.8-27b:free",
-  fallbackModels: "google/gemma-4-31b-it:free, thinkingmachines/inkling:free",
+  fallbackModels: "qwen/qwen3.8-27b:free, google/gemma-4-31b-it:free, thinkingmachines/inkling:free", // het hoofdmodel zelf wordt overgeslagen
   searchProvider: "duckduckgo", // "duckduckgo" | "openrouter" | "off"
   answerLanguage: "auto", // "auto" | "nl" | "en" | "fr" | "de"
   reasoning: "low", // "auto" | "low" | "medium" | "high" — laag = snel; hoog voor moeilijke wiskunde

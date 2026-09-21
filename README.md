@@ -111,9 +111,21 @@ npm test             # e2e-tests (jsdom + nep-OpenRouter)
 python3 scripts/make-icons.py   # iconen opnieuw genereren (Pillow)
 ```
 
+## Foutmeldingen: wat betekent wat?
+
+| Melding | Oorzaak | Wat doe je |
+|---|---|---|
+| **… overbelast bij de aanbieder (429)** | Het gratis model wordt door te veel mensen tegelijk gebruikt (OpenRouter stuurt dan “Provider returned error”). Dit gaat **niet** van jouw 50 vragen per dag af. | De agent wacht een paar seconden en probeert automatisch de reserve-modellen. Blijft het misgaan: klik *Probeer met …*, kies een ander gratis model in het menu, of probeer het over een minuut opnieuw. |
+| **Je gratis daglimiet is op** | 50 gratis verzoeken per dag verbruikt (elke stap van de agent = 1 verzoek). | Wachten tot 00:00 UTC (01:00/02:00 NL-tijd), of tijdelijk een lokaal Ollama-model gebruiken. |
+| **Te snel achter elkaar (20 per minuut)** | Minuutlimiet van gratis modellen. | Halve minuut wachten. |
+| **Dit is een browserpagina; ik kan die niet lezen** | Je zat op een `chrome://`-pagina, de Chrome Web Store of een nieuw leeg tabblad; daar mag geen enkele extensie bij. | Open een gewone website en stel je vraag opnieuw. |
+| **API-sleutel ongeldig (401)** | Sleutel verkeerd geplakt of ingetrokken. | Nieuwe sleutel maken op openrouter.ai/keys en opnieuw invullen. |
+
+Onder elke foutmelding zit *Technische details* met de ruwe melding van OpenRouter – handig om mee te sturen als je hulp vraagt.
+
 ## Bekende beperkingen / ideeën
 
 - PDF's in de browser kunnen (nog) niet als tekst gelezen worden – maak een screenshot (📷) van het stuk dat je bedoelt.
 - Firefox wordt nog niet ondersteund (zijpaneel-API verschilt).
 - DuckDuckGo kan bij heel veel zoekopdrachten om een captcha vragen; dan valt de agent terug op Bing.
-- Gratis modellen zijn soms druk of traag; met reserve-modellen wordt dat opgevangen.
+- Gratis modellen zijn soms druk of traag (vooral ’s avonds); de agent schakelt dan automatisch over op de reserve-modellen, maar soms zijn die óók druk – dan even later opnieuw proberen.

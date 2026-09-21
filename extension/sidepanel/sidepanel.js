@@ -287,6 +287,15 @@ async function send() {
       settings, history, userContent, ctx, signal: abortController.signal,
       ui: {
         onStep: (n, max) => setStatus(n === 1 ? "Denkt na…" : `Stap ${n}/${max}…`, true),
+        onRetry: ({ from, to, waitMs, error: err }) => {
+          const secs = Math.round(waitMs / 1000);
+          const why = err.kind === "minute_limit" ? "minuutlimiet bereikt" : err.kind === "provider_down" ? "aanbieder niet beschikbaar" : "overbelast bij de aanbieder";
+          const msg = from === to
+            ? `«${from.split("/").pop()}» ${why} — over ${secs} s nog een keer…`
+            : `«${from.split("/").pop()}» ${why} — over ${secs} s verder met «${to.split("/").pop()}»…`;
+          setStatus(msg, true);
+          turn.note("⏳ " + msg);
+        },
         onText: (full) => turn.text(full),
         onReasoning: (full) => turn.reasoning(full),
         onToolPending: (name) => setStatus(describeToolCall(name, {}) + "…", true),
@@ -301,7 +310,13 @@ async function send() {
     setStatus("");
   } catch (e) {
     const aborted = e?.name === "AbortError";
-    turn.error(aborted ? "Gestopt." : (e?.message || String(e)), !aborted, e, () => { userEl.remove(); turn.remove(); send(); });
+    let message = aborted ? "Gestopt." : (e?.message || String(e));
+    if (!aborted && e instanceof ApiError && e.status === 429) message += await quotaSentence();
+    const retry = () => { userEl.remove(); turn.remove(); send(); };
+    turn.error(message, !aborted, e, retry, {
+      alternatives: !aborted && e instanceof ApiError && e.transient ? alternativeModels() : [],
+      onSwitch: async (id) => { settings = await saveSettings({ model: id }); populateModelSelect(); refreshQuota(true); retry(); },
+    });
     if (!aborted) {
       // Vraag terugzetten zodat opnieuw proberen makkelijk is.
       conversation.messages.pop();
@@ -320,6 +335,28 @@ async function send() {
     refreshQuota(true);
     ui.input.focus();
   }
+}
+
+/** "Gratis vragen vandaag: 47/50 over." — zodat duidelijk is of een 429 aan de daglimiet ligt of aan drukte. */
+async function quotaSentence() {
+  if (!settings.apiKey || !/openrouter\.ai/.test(settings.baseUrl || "")) return "";
+  try {
+    const info = await Promise.race([
+      getKeyInfo({ baseUrl: settings.baseUrl, apiKey: settings.apiKey }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 4000)),
+    ]);
+    const f = info.free_model_daily_requests;
+    if (!f || typeof f.remaining !== "number") return "";
+    return f.remaining <= 0
+      ? ` Je hebt vandaag alle ${f.limit} gratis vragen gebruikt.`
+      : ` (Gratis vragen vandaag: nog ${f.remaining} van ${f.limit} over — je daglimiet is dus niet het probleem.)`;
+  } catch (_) { return ""; }
+}
+
+/** Andere gratis modellen dan het huidige (voor de knoppen "Probeer met …"). */
+function alternativeModels() {
+  const want = isFreeModel(settings.model) ? (m) => m.free : () => true;
+  return CURATED_MODELS.filter((m) => m.id !== settings.model && want(m)).slice(0, 2).map((m) => ({ id: m.id, label: shortModelName(m).replace(/ \(gratis\)$/, "") }));
 }
 
 // ---------- Weergave ----------
@@ -420,11 +457,29 @@ function createTurnView() {
       wrap.append(meta);
       scrollToBottom();
     },
-    error(message, retry, err, onRetry) {
+    note(text) {
+      steps.append(h("div", { class: "step note", text }));
+      scrollToBottom();
+    },
+    error(message, retry, err, onRetry, { alternatives = [], onSwitch = null } = {}) {
       flush();
-      const box = h("div", { class: "error" }, message);
-      if (err instanceof ApiError && err.status === 401) box.append(" ", h("button", { text: "Instellingen", onclick: () => chrome.runtime.openOptionsPage() }));
-      if (retry) box.append(h("button", { text: "Opnieuw", onclick: () => (onRetry ? onRetry() : send()) }));
+      const box = h("div", { class: "error" }, h("div", { text: message }));
+      const actions = h("div", { class: "error-actions" });
+      if (err instanceof ApiError && err.status === 401) actions.append(h("button", { text: "Instellingen", onclick: () => chrome.runtime.openOptionsPage() }));
+      if (retry) actions.append(h("button", { text: "Opnieuw", onclick: () => (onRetry ? onRetry() : send()) }));
+      for (const alt of alternatives) {
+        actions.append(h("button", { text: `Probeer met ${alt.label}`, title: alt.id, onclick: () => onSwitch?.(alt.id) }));
+      }
+      if (actions.childElementCount) box.append(actions);
+      if (err instanceof ApiError && (err.details || err.status)) {
+        const lines = [
+          err.status ? `HTTP ${err.status}${err.kind ? ` · ${err.kind}` : ""}` : "",
+          err.model ? `model: ${err.model}` : "",
+          err.provider ? `aanbieder: ${err.provider}` : "",
+          err.details || "",
+        ].filter(Boolean).join("\n");
+        box.append(h("details", { class: "error-details" }, h("summary", { text: "Technische details" }), h("pre", { text: lines })));
+      }
       wrap.append(box);
       scrollToBottom(true);
     },

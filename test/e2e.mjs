@@ -307,6 +307,62 @@ await test("agent: bij 400 op extra parameters wordt zonder reasoning/models opn
   assert.ok(bodies[0].reasoning && !bodies[1].reasoning);
 });
 
+await test("openrouter: 429 wordt onderscheiden in daglimiet / minuutlimiet / overbelaste aanbieder", async () => {
+  const { classifyError, friendlyError } = await import("../extension/lib/openrouter.js");
+  const busy = { error: { code: 429, message: "Provider returned error", metadata: { raw: "Rate limit exceeded", provider_name: "Chutes" } } };
+  assert.equal(classifyError(429, busy), "provider_busy");
+  const m = friendlyError(429, busy, null, { model: "qwen/qwen3.8-27b:free" });
+  assert.match(m, /overbelast/); assert.match(m, /qwen3.8-27b/); assert.match(m, /Chutes/); assert.doesNotMatch(m, /daglimiet is op/);
+  assert.equal(classifyError(429, { error: { code: 429, message: "Rate limit exceeded: free-models-per-day" } }), "daily_limit");
+  assert.equal(classifyError(429, { error: { code: 429, message: "Rate limit exceeded: free-models-per-min" } }), "minute_limit");
+  assert.match(friendlyError(429, { error: { message: "Rate limit exceeded: free-models-per-min" } }), /20 verzoeken per minuut/);
+  assert.equal(classifyError(503, { error: { message: "upstream down" } }), "provider_down");
+  assert.equal(classifyError(402, {}), "credits");
+});
+
+await test("agent: bij drukte (429 Provider returned error) schakelt hij over naar het volgende gratis model", async () => {
+  const p = makePage();
+  const bodies = [];
+  installGlobals(p, (step, body) => {
+    bodies.push(body);
+    if (step === 1) return { status: 429, body: { error: { code: 429, message: "Provider returned error", metadata: { provider_name: "Chutes", raw: "429 Too Many Requests" } } } };
+    if (step === 2) return { status: 503, body: { error: { code: 503, message: "Provider unavailable" } } };
+    return textChunks("gelukt via reserve", { cost: 0 });
+  });
+  const { runAgent } = await import("../extension/sidepanel/agent.js");
+  const { DEFAULTS } = await import("../extension/lib/settings.js");
+  const retries = [];
+  const r = await runAgent({
+    settings: { ...DEFAULTS, apiKey: "k" }, history: [], userContent: [{ type: "text", text: "hoi" }],
+    ctx: { getTabId: () => 1, setTabId() {}, windowId: 1 }, retryDelays: [0, 0],
+    ui: { onRetry: (info) => retries.push(info) },
+  });
+  assert.equal(r.content, "gelukt via reserve");
+  assert.equal(bodies.length, 3);
+  assert.equal(bodies[0].model, "qwen/qwen3.8-27b:free");
+  assert.equal(bodies[1].model, "google/gemma-4-31b-it:free", "na 429 moet het volgende reserve-model voorop staan");
+  assert.equal(bodies[1].models[0], "google/gemma-4-31b-it:free");
+  assert.equal(bodies[2].model, "thinkingmachines/inkling:free");
+  assert.equal(retries.length, 2);
+  assert.equal(retries[0].error.kind, "provider_busy");
+  assert.equal(retries[0].to, "google/gemma-4-31b-it:free");
+  assert.equal(retries[1].error.kind, "provider_down");
+});
+
+await test("agent: daglimiet (free-models-per-day) → meteen duidelijke fout, geen extra verzoeken", async () => {
+  const p = makePage();
+  const bodies = [];
+  installGlobals(p, (step, body) => { bodies.push(body); return { status: 429, body: { error: { code: 429, message: "Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day" } } }; });
+  const { runAgent } = await import("../extension/sidepanel/agent.js");
+  const { DEFAULTS } = await import("../extension/lib/settings.js");
+  const { ApiError } = await import("../extension/lib/openrouter.js");
+  await assert.rejects(
+    runAgent({ settings: { ...DEFAULTS, apiKey: "k" }, history: [], userContent: [{ type: "text", text: "hoi" }], ctx: { getTabId: () => 1, setTabId() {}, windowId: 1 }, retryDelays: [0, 0] }),
+    (e) => e instanceof ApiError && e.kind === "daily_limit" && !e.transient && /daglimiet is op/.test(e.message),
+  );
+  assert.equal(bodies.length, 1, "bij de daglimiet heeft opnieuw proberen geen zin");
+});
+
 await test("agent: tool-budget op → laatste stap dwingt een antwoord af", async () => {
   const p = makePage();
   const bodies = [];

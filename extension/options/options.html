@@ -54,8 +54,8 @@
         <input type="text" id="customModel" placeholder="bijv. google/gemini-3.5-flash of llama3.2-vision">
       </label>
       <label class="field">
-        <span>Reserve-modellen (komma-gescheiden; worden geprobeerd als het eerste model vol/offline is)</span>
-        <input type="text" id="fallbackModels" placeholder="google/gemma-4-31b-it:free, thinkingmachines/inkling:free">
+        <span>Reserve-modellen (komma-gescheiden). Als het eerste model overbelast is (fout 429 “Provider returned error”) of offline, schakelt de agent na een korte pauze automatisch over naar het volgende.</span>
+        <input type="text" id="fallbackModels" placeholder="qwen/qwen3.8-27b:free, google/gemma-4-31b-it:free, thinkingmachines/inkling:free">
       </label>
       <p class="muted small">Tip: gratis modellen zijn soms druk of traag. Met tegoed is <strong>google/gemini-3.5-flash</strong> een sterke, goedkope keuze (ongeveer $0,75 per miljoen invoertekens; een gemiddelde vraag met pagina kost minder dan een cent).</p>
     </section>
