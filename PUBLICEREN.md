@@ -12,7 +12,7 @@ dat is gratis en staat al klaar.
 > **Jonger dan 18?** Zowel Microsoft Partner Center als de Chrome Web Store zijn contracten die een volwassene moet
 > aangaan, en ook OpenRouter eist in zijn voorwaarden 18+. Vraag een ouder/verzorger om die accounts op zijn/haar naam te
 > zetten; het uploaden en de winkelteksten kun je daarna zelf doen. Er is een kant-en-klare uitlegpagina:
-> <https://ven1x-cloud.github.io/ai_web-agent/ouders.html> (bron: `docs/ouders.html`). Route 1 (website + ZIP) heeft
+> [`OUDERS.md`](OUDERS.md) (ook als webpagina: <https://ven1x-cloud.github.io/ai_web-agent/ouders.html>). Route 1 (website + ZIP) heeft
 > geen enkel account nodig.
 >
 > **Over de $5 van Google:** die kun je niet met contant geld of een cadeaukaart betalen; Google Payments
