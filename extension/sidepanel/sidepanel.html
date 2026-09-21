@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Web Agent</title>
+  <link rel="stylesheet" href="../vendor/katex.min.css">
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand" title="AI Web Agent">
+      <img src="../icons/icon32.png" alt="" width="22" height="22">
+      <span>AI Web Agent</span>
+    </div>
+    <div class="tab-info" id="tab-info" title="De website waar de agent nu naar kijkt">
+      <img id="tab-favicon" alt="" width="16" height="16" hidden>
+      <span id="tab-title">Geen tabblad</span>
+    </div>
+    <div class="topbar-actions">
+      <span class="quota" id="quota" hidden></span>
+      <button class="icon-btn" id="btn-new" title="Nieuw gesprek">＋</button>
+      <button class="icon-btn" id="btn-history" title="Eerdere gesprekken">🕘</button>
+      <button class="icon-btn" id="btn-settings" title="Instellingen">⚙️</button>
+    </div>
+  </header>
+
+  <div class="history-panel" id="history-panel" hidden>
+    <div class="history-head"><strong>Eerdere gesprekken</strong><button class="icon-btn" id="btn-history-close" title="Sluiten">✕</button></div>
+    <ul id="history-list"></ul>
+  </div>
+
+  <main id="messages" class="messages">
+    <section class="welcome" id="welcome">
+      <h1>Hoi! 👋</h1>
+      <p>Ik kijk mee op de website die je open hebt. Stel een vraag, of kies een snelle actie:</p>
+      <div class="quick-actions">
+        <button class="chip" data-prompt="Vat deze pagina kort en duidelijk samen in het Nederlands.">📝 Vat deze pagina samen</button>
+        <button class="chip" data-prompt="Leg de opgave(n) op deze pagina stap voor stap uit en geef het antwoord.">🧮 Leg de opgave uit</button>
+        <button class="chip" data-prompt="Vertaal de geselecteerde tekst (of anders de hoofdtekst van de pagina) naar het Nederlands en leg moeilijke woorden uit.">🌍 Vertaal naar het Nederlands</button>
+        <button class="chip" data-prompt="Bekijk de afbeeldingen/figuren op deze pagina en beschrijf wat erop staat.">🖼️ Wat staat er op de afbeeldingen?</button>
+        <button class="chip" data-prompt="Maak een overhoring van 8 vragen over de stof op deze pagina. Stel de vragen één voor één en controleer mijn antwoorden.">🎓 Overhoor mij</button>
+        <button class="chip" data-prompt="Controleer de feiten op deze pagina met een zoekopdracht op internet en geef bronnen.">🌐 Check dit op internet</button>
+      </div>
+      <p class="hint">Tip: selecteer tekst op de pagina en klik rechts → “Vraag AI Web Agent”. Plak of sleep een foto van je huiswerk in het venster om die te laten bekijken.</p>
+    </section>
+  </main>
+
+  <footer class="composer">
+    <div class="attachments" id="attachments"></div>
+    <div class="composer-box" id="composer-box">
+      <textarea id="input" rows="1" placeholder="Vraag iets over deze pagina… (Enter = versturen, Shift+Enter = nieuwe regel)"></textarea>
+      <div class="composer-row">
+        <button class="icon-btn" id="btn-attach" title="Afbeelding toevoegen (of plak/sleep)">📎</button>
+        <button class="icon-btn" id="btn-shot" title="Screenshot van de pagina meesturen">📷</button>
+        <label class="toggle" title="Stuur de tekst van de huidige pagina mee met je vraag">
+          <input type="checkbox" id="include-page" checked><span>Pagina</span>
+        </label>
+        <select id="model-select" title="Model"></select>
+        <span class="spacer"></span>
+        <button class="send-btn" id="btn-send" title="Versturen">➤</button>
+        <button class="stop-btn" id="btn-stop" title="Stoppen" hidden>■</button>
+      </div>
+    </div>
+    <div class="status" id="status"></div>
+  </footer>
+
+  <div class="setup" id="setup" hidden>
+    <div class="setup-card">
+      <img src="../icons/icon128.png" alt="" width="56" height="56">
+      <h2>Bijna klaar!</h2>
+      <p>De agent gebruikt <a href="https://openrouter.ai" target="_blank" rel="noopener">OpenRouter</a> als “brein”. Dat kan <strong>gratis</strong> (50 vragen per dag met een gratis model).</p>
+      <ol>
+        <li>Maak een account op <a href="https://openrouter.ai" target="_blank" rel="noopener">openrouter.ai</a>.</li>
+        <li>Ga naar <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener">Keys</a> → <em>Create key</em> en kopieer de sleutel (begint met <code>sk-or-</code>).</li>
+        <li>Plak hem hieronder.</li>
+      </ol>
+      <div class="setup-form">
+        <input type="password" id="setup-key" placeholder="sk-or-v1-…" autocomplete="off" spellcheck="false">
+        <button id="setup-save" class="primary">Opslaan</button>
+      </div>
+      <p class="setup-status" id="setup-status"></p>
+      <button class="link-btn" id="setup-options">Meer instellingen…</button>
+    </div>
+  </div>
+
+  <input type="file" id="file-input" accept="image/*" multiple hidden>
+
+  <script src="../vendor/marked.umd.js"></script>
+  <script src="../vendor/purify.min.js"></script>
+  <script src="../vendor/katex.min.js"></script>
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>
