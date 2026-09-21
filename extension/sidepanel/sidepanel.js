@@ -252,7 +252,9 @@ async function send() {
   const wantPage = ui.includePage.checked;
   if (currentTab && !page.isRestrictedUrl(currentTab.url)) {
     try {
-      pageInfo = await page.pageAction(currentTab.id, "page_info", { maxChars: wantPage ? Number(settings.pageChars) || 6000 : 0 });
+      pageInfo = wantPage
+        ? await page.pageInfoWithFrames(currentTab.id, { maxChars: Number(settings.pageChars) || 6000 })
+        : await page.pageAction(currentTab.id, "page_info", { maxChars: 0 });
     } catch (e) {
       pageNotice = "Pagina kon niet gelezen worden: " + (e.message || e);
     }

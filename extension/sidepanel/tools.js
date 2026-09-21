@@ -182,7 +182,8 @@ async function run(name, args, ctx) {
   const frame = args.frame_id != null ? Number(args.frame_id) : null;
   switch (name) {
     case "read_page": {
-      const r = await page.pageAction(tabId, "page_info", { offset: clampInt(args.offset, 0, 5e6, 0), maxChars: clampInt(args.max_chars, 500, 20000, 8000) }, frame);
+      const opts = { offset: clampInt(args.offset, 0, 5e6, 0), maxChars: clampInt(args.max_chars, 500, 20000, 8000) };
+      const r = frame == null ? await page.pageInfoWithFrames(tabId, opts) : await page.pageAction(tabId, "page_info", opts, frame);
       return { text: toResultText(r) };
     }
     case "find_text": {

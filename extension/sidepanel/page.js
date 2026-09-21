@@ -19,9 +19,9 @@ export async function getTab(tabId) {
   try { return await chrome.tabs.get(tabId); } catch (_) { return null; }
 }
 
-async function ping(tabId, frameId) {
+async function ping(tabId, frameId = 0) {
   try {
-    const r = await chrome.tabs.sendMessage(tabId, { __aiWebAgent: true, action: "ping" }, frameId != null ? { frameId } : undefined);
+    const r = await chrome.tabs.sendMessage(tabId, { __aiWebAgent: true, action: "ping" }, { frameId });
     return !!(r && r.ok);
   } catch (_) {
     return false;
@@ -49,12 +49,16 @@ export async function ensureInjected(tabId) {
   throw new PageError("Het hulpscript reageert niet op deze pagina. Herlaad de pagina en probeer opnieuw.");
 }
 
-/** Stuurt een actie naar het content-script en geeft het resultaat terug (of gooit een fout). */
+/**
+ * Stuurt een actie naar het content-script en geeft het resultaat terug (of gooit een fout).
+ * Zonder frameId gaat de actie naar het hoofdkader (frame 0). Zonder expliciet frame zou Chrome het bericht
+ * naar álle kaders sturen en het eerste antwoord teruggeven – dan "wint" soms een leeg about:blank-iframe.
+ */
 export async function pageAction(tabId, action, args = {}, frameId = null) {
   await ensureInjected(tabId);
   let res;
   try {
-    res = await chrome.tabs.sendMessage(tabId, { __aiWebAgent: true, action, args }, frameId != null ? { frameId } : undefined);
+    res = await chrome.tabs.sendMessage(tabId, { __aiWebAgent: true, action, args }, { frameId: frameId != null ? Number(frameId) : 0 });
   } catch (e) {
     throw new PageError("Geen verbinding met de pagina (" + (e.message || e) + "). Is de pagina nog aan het laden?");
   }
@@ -63,12 +67,51 @@ export async function pageAction(tabId, action, args = {}, frameId = null) {
   return res.result;
 }
 
+/** Alle kaders van de tab (hoofdpagina + iframes) met hoeveel tekst erin staat. Lege kaders worden weggelaten. */
 export async function listFrames(tabId) {
   const results = await chrome.scripting.executeScript({
     target: { tabId, allFrames: true },
-    func: () => ({ url: location.href, title: document.title, top: window === window.top }),
+    func: () => ({
+      url: location.href, title: document.title, top: window === window.top,
+      textLength: ((document.body && document.body.innerText) || "").trim().length,
+      inputs: document.querySelectorAll("input:not([type=hidden]), textarea, select, [contenteditable=true]").length,
+    }),
   });
-  return results.map((r) => ({ frameId: r.frameId, ...(r.result || {}) })).filter((f) => f.url && !f.url.startsWith("about:"));
+  return results
+    .map((r) => ({ frameId: r.frameId, ...(r.result || {}) }))
+    .filter((f) => f.top || f.textLength > 0 || f.inputs > 0)
+    .sort((a, b) => (a.top ? -1 : b.top ? 1 : b.textLength - a.textLength));
+}
+
+/**
+ * page_info van het hoofdkader, aangevuld met de inhoud van ingebedde kaders (iframes) die tekst of invoervelden
+ * bevatten. Oefenplatforms zetten de opgave vaak in zo'n kader; zonder dit zag de agent alleen de kop van de pagina.
+ */
+export async function pageInfoWithFrames(tabId, { maxChars = 6000, offset = 0 } = {}) {
+  const info = await pageAction(tabId, "page_info", { offset, maxChars }, 0);
+  if (offset > 0) return info;
+  let frames = [];
+  try { frames = await listFrames(tabId); } catch (_) { return info; }
+  const children = frames.filter((f) => !f.top && (f.textLength > 30 || f.inputs > 0)).slice(0, 5);
+  if (!children.length) return info;
+  let budget = Math.max(1500, maxChars - (info.text || "").length);
+  const sections = [];
+  for (const f of children) {
+    if (budget < 200) break;
+    try {
+      const fi = await pageAction(tabId, "page_info", { maxChars: Math.min(budget, maxChars) }, f.frameId);
+      if (!fi.text || fi.text.trim().length < 20) continue;
+      const src = fi.url && !/^about:/.test(fi.url) ? `, ${fi.url}` : "";
+      sections.push(`\n\n=== Embedded frame (frame_id ${f.frameId}${src}) — for elements inside it, call get_interactive/click/type_text with frame_id ${f.frameId} ===\n${fi.text}`);
+      budget -= fi.text.length;
+    } catch (_) { /* kader niet bereikbaar (bijv. nog aan het laden) */ }
+  }
+  if (sections.length) {
+    info.text = (info.text || "") + sections.join("");
+    info.frameTexts = sections.length;
+    info.totalChars = (info.totalChars || 0) + sections.reduce((n, t) => n + t.length, 0);
+  }
+  return info;
 }
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

@@ -363,6 +363,36 @@ await test("agent: daglimiet (free-models-per-day) → meteen duidelijke fout, g
   assert.equal(bodies.length, 1, "bij de daglimiet heeft opnieuw proberen geen zin");
 });
 
+await test("page: pagina lezen richt zich op het hoofdkader (frame 0) en neemt iframes met inhoud mee", async () => {
+  const p = makePage();
+  installGlobals(p, () => []);
+  const sent = [];
+  const realSend = globalThis.chrome.tabs.sendMessage;
+  globalThis.chrome.tabs.sendMessage = async (id, msg, opts) => {
+    sent.push({ action: msg.action, frameId: opts?.frameId });
+    if (opts?.frameId === 5 && msg.action === "page_info") {
+      return { ok: true, result: { url: "about:blank", title: "", text: "1 f_nny  2 h_ppy  3 s_d [invoerveld (leeg)]", images: 0, frames: [], totalChars: 40 } };
+    }
+    if (opts?.frameId === 5) return { ok: true }; // ping
+    return realSend(id, msg, opts);
+  };
+  globalThis.chrome.scripting.executeScript = async ({ func }) => (func
+    ? [{ frameId: 0, result: { url: p.window.location.href, title: "top", top: true, textLength: 900, inputs: 1 } },
+       { frameId: 3, result: { url: "about:blank", title: "", top: false, textLength: 0, inputs: 0 } },
+       { frameId: 5, result: { url: "about:blank", title: "", top: false, textLength: 40, inputs: 9 } }]
+    : [{ frameId: 0 }]);
+  const page = await import("../extension/sidepanel/page.js");
+  const info = await page.pageInfoWithFrames(1, { maxChars: 6000 });
+  assert.match(info.text, /# Opgave 3: Pythagoras/, "hoofdkader eerst");
+  assert.match(info.text, /Embedded frame \(frame_id 5\)[\s\S]*f_nny/, "inhoud van het iframe met invoervelden moet meekomen");
+  assert.doesNotMatch(info.text, /frame_id 3/, "leeg iframe wordt overgeslagen");
+  assert.equal(info.frameTexts, 1);
+  assert.ok(sent.filter((x) => x.action === "page_info").every((x) => typeof x.frameId === "number"), "page_info altijd naar een specifiek kader sturen");
+  assert.equal(sent.find((x) => x.action === "page_info").frameId, 0, "standaard het hoofdkader");
+  const frames = await page.listFrames(1);
+  assert.deepEqual(frames.map((f) => f.frameId), [0, 5], "kaders zonder tekst/velden weglaten, hoofdkader eerst");
+});
+
 await test("agent: tool-budget op → laatste stap dwingt een antwoord af", async () => {
   const p = makePage();
   const bodies = [];
