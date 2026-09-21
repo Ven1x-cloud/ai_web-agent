@@ -1,4 +1,4 @@
-import { loadSettings, saveSettings, CURATED_MODELS, DEFAULTS, isFreeModel } from "../lib/settings.js";
+import { loadSettings, saveSettings, CURATED_MODELS, DEFAULTS, isFreeModel, PROVIDER_PRESETS } from "../lib/settings.js";
 import { getKeyInfo, getCredits, listModels } from "../lib/openrouter.js";
 
 const $ = (s) => document.querySelector(s);
@@ -49,8 +49,85 @@ function fillModelSelect() {
 }
 const fmt = (n) => (n >= 1 ? n.toFixed(2) : n.toFixed(3)).replace(/\.?0+$/, "");
 
+// ---------- Reserve-aanbieders ----------
+function el(tag, attrs = {}, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "text") e.textContent = v;
+    else if (k === "class") e.className = v;
+    else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2), v);
+    else if (v === true) e.setAttribute(k, "");
+    else if (v !== false && v != null) e.setAttribute(k, v);
+  }
+  for (const c of children) if (c != null) e.append(c);
+  return e;
+}
+
+function providerRows() { return Array.isArray(settings.providers) ? settings.providers : []; }
+
+async function saveProviders(list) {
+  await save({ providers: list });
+  renderProviders();
+}
+
+function renderProviders() {
+  const box = $("#providers");
+  box.innerHTML = "";
+  const list = providerRows();
+  if (!list.length) {
+    box.append(el("p", { class: "muted small", text: "Nog geen reserve-aanbieders. Kies er hieronder een en klik op Toevoegen." }));
+    return;
+  }
+  list.forEach((p, i) => {
+    const preset = PROVIDER_PRESETS.find((x) => x.id === p.preset) || PROVIDER_PRESETS[PROVIDER_PRESETS.length - 1];
+    const upd = (patch) => { const next = list.map((x, j) => (j === i ? { ...x, ...patch } : x)); return saveProviders(next); };
+    const field = (label, key, type = "text", placeholder = "") => el("label", {}, label,
+      el("input", { type, value: p[key] || "", placeholder, autocomplete: "off", spellcheck: "false", onchange: (e) => upd({ [key]: e.target.value.trim() }) }));
+    const status = el("span", { class: "status", style: "margin:0" });
+    const card = el("div", { class: "provider" + (p.enabled === false ? " off" : "") },
+      el("div", { class: "top" },
+        el("label", { class: "inline", style: "margin:0;flex-direction:row;align-items:center" },
+          el("input", { type: "checkbox", checked: p.enabled !== false, onchange: (e) => upd({ enabled: e.target.checked }) }), " aan"),
+        el("strong", { text: `${i + 1}. ${p.name || preset.name}` }),
+        el("button", { type: "button", class: "ghost", title: "Omhoog", text: "↑", disabled: i === 0, onclick: () => { const n = list.slice(); [n[i - 1], n[i]] = [n[i], n[i - 1]]; saveProviders(n); } }),
+        el("button", { type: "button", class: "ghost", title: "Omlaag", text: "↓", disabled: i === list.length - 1, onclick: () => { const n = list.slice(); [n[i + 1], n[i]] = [n[i], n[i + 1]]; saveProviders(n); } }),
+        el("button", { type: "button", text: "Test", onclick: async () => {
+          status.className = "status"; status.textContent = "Testen…";
+          try {
+            const models = await listModels({ baseUrl: p.baseUrl, apiKey: p.apiKey, onlyCapable: false });
+            const want = (p.model || "").split(",")[0].trim().replace(/^models\//, "");
+            const has = models.some((m) => String(m.id).replace(/^models\//, "") === want);
+            status.className = "status " + (has ? "ok" : "err");
+            status.textContent = has ? `Werkt ✓ (${models.length} modellen)` : `Sleutel werkt, maar model “${p.model}” staat niet in de lijst. Beschikbaar o.a.: ${models.slice(0, 6).map((m) => m.id).join(", ")}`;
+          } catch (e) { status.className = "status err"; status.textContent = e.message || String(e); }
+        } }),
+        el("button", { type: "button", class: "danger", text: "✕", title: "Verwijderen", onclick: () => saveProviders(list.filter((_, j) => j !== i)) }),
+      ),
+      field("Naam", "name", "text", preset.name),
+      field("Model (eventueel meerdere, komma-gescheiden)", "model", "text", preset.model),
+      el("label", { class: "full" }, "Server (base URL)", el("input", { type: "text", value: p.baseUrl || "", placeholder: preset.baseUrl, onchange: (e) => upd({ baseUrl: e.target.value.trim().replace(/\/+$/, "") }) })),
+      el("label", { class: "full" }, "API-sleutel", el("input", { type: "password", value: p.apiKey || "", placeholder: preset.id === "ollama" ? "(niet nodig)" : "sleutel van deze dienst", autocomplete: "off", onchange: (e) => upd({ apiKey: e.target.value.trim() }) })),
+      el("div", { class: "note" }, preset.note ? preset.note + " " : "", preset.keysUrl ? el("a", { href: preset.keysUrl, target: "_blank", rel: "noopener", text: "Sleutel aanmaken ↗" }) : null, " ", status),
+    );
+    box.append(card);
+  });
+}
+
+function initProviders() {
+  const sel = $("#providerPreset");
+  for (const p of PROVIDER_PRESETS) sel.append(el("option", { value: p.id, text: p.name }));
+  renderProviders();
+  $("#addProvider").addEventListener("click", () => {
+    const preset = PROVIDER_PRESETS.find((x) => x.id === sel.value) || PROVIDER_PRESETS[0];
+    const row = { id: `p_${Date.now().toString(36)}`, preset: preset.id, name: preset.name, baseUrl: preset.baseUrl, model: preset.model, apiKey: preset.apiKey || "", enabled: true };
+    saveProviders([...providerRows(), row]);
+    $("#providerStatus").textContent = preset.keysUrl ? `Toegevoegd. Maak een sleutel aan via ${preset.keysUrl} en plak die hierboven.` : "Toegevoegd. Vul server, model en sleutel in.";
+  });
+}
+
 async function init() {
   settings = await loadSettings();
+  initProviders();
   for (const f of fields) $("#" + f).value = settings[f] ?? "";
   for (const c of checks) $("#" + c).checked = !!settings[c];
   const radio = document.querySelector(`input[name=searchProvider][value="${settings.searchProvider}"]`);

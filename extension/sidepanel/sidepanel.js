@@ -1,5 +1,5 @@
 // UI van het zijpaneel: chat, bijlagen, tabblad-info, geschiedenis, quota.
-import { loadSettings, saveSettings, onSettingsChanged, CURATED_MODELS, isFreeModel } from "../lib/settings.js";
+import { loadSettings, saveSettings, onSettingsChanged, CURATED_MODELS, isFreeModel, providerChain, providerKey, isExhausted } from "../lib/settings.js";
 import { getKeyInfo, getCredits, formatCost, ApiError } from "../lib/openrouter.js";
 import { buildUserContent, PAGE_CTX_END } from "../lib/prompts.js";
 import { runAgent } from "./agent.js";
@@ -156,11 +156,17 @@ async function refreshQuota(force = false) {
   }
 }
 function showQuota(text, cls) {
-  ui.quota.textContent = text;
+  const reserves = providerChain(settings).slice(1);
+  const now = Date.now();
+  const left = reserves.filter((p) => !isExhausted(providerState, p, now)).length;
+  ui.quota.textContent = reserves.length ? `${text} · ${left}/${reserves.length} reserve` : text;
   ui.quota.className = "quota " + (cls || "");
-  ui.quota.title = isFreeModel(settings.model)
+  const base = isFreeModel(settings.model)
     ? "Gratis modellen: 50 verzoeken per dag (1000 na eenmalig $10 tegoed), max 20 per minuut. Elke stap van de agent telt als 1 verzoek."
     : "Resterend tegoed op OpenRouter";
+  ui.quota.title = reserves.length
+    ? `${base}\nReserve-aanbieders (automatisch als de hoofdaanbieder op is):\n` + reserves.map((p) => `• ${p.name}${isExhausted(providerState, p, now) ? ` – op tot ${fmtTime(providerState[providerKey(p)].until)}` : ""}`).join("\n")
+    : base;
   ui.quota.hidden = false;
 }
 
@@ -286,9 +292,21 @@ async function send() {
   const history = conversation.messages.slice(0, -1);
   try {
     const result = await runAgent({
-      settings, history, userContent, ctx, signal: abortController.signal,
+      settings, history, userContent, ctx, signal: abortController.signal, providerState,
       ui: {
         onStep: (n, max) => setStatus(n === 1 ? "Denkt na…" : `Stap ${n}/${max}…`, true),
+        onExhausted: (p, until, err) => {
+          saveProviderState();
+          const why = err?.kind === "credits" ? "geen tegoed meer" : "daglimiet bereikt";
+          turn.note(`🚫 ${providerLabel(p)}: ${why} (weer beschikbaar rond ${fmtTime(until)}).`);
+        },
+        onProvider: ({ from, to, reason }) => {
+          const why = reason === "busy" ? "alle modellen overbelast" : reason === "auth" ? "sleutel werkt niet" : "vandaag op";
+          const msg = `🔁 ${providerLabel(from)} ${why} → verder met ${providerLabel(to)} (${to.model.split(",")[0].trim()}). Het gesprek blijft bewaard.`;
+          setStatus(msg, true);
+          turn.note(msg);
+          refreshQuota(true);
+        },
         onRetry: ({ from, to, waitMs, error: err }) => {
           const secs = Math.round(waitMs / 1000);
           const why = err.kind === "minute_limit" ? "minuutlimiet bereikt" : err.kind === "provider_down" ? "aanbieder niet beschikbaar" : "overbelast bij de aanbieder";
@@ -308,7 +326,8 @@ async function send() {
     for (const m of result.messages) conversation.messages.push(m);
     const last = conversation.messages[conversation.messages.length - 1];
     if (last?.role === "assistant") last._meta = { ...(last._meta || {}), cost: result.cost, model: result.model, steps: result.steps };
-    turn.finish({ content: result.content, cost: result.cost, model: result.model, steps: result.steps, truncated: result.truncated });
+    const shownModel = result.providerId && result.providerId !== "primary" ? `${result.provider} · ${result.model || ""}` : result.model;
+    turn.finish({ content: result.content, cost: result.cost, model: shownModel, steps: result.steps, truncated: result.truncated });
     setStatus("");
   } catch (e) {
     const aborted = e?.name === "AbortError";
@@ -353,6 +372,19 @@ async function quotaSentence() {
       ? ` Je hebt vandaag alle ${f.limit} gratis vragen gebruikt.`
       : ` (Gratis vragen vandaag: nog ${f.remaining} van ${f.limit} over — je daglimiet is dus niet het probleem.)`;
   } catch (_) { return ""; }
+}
+
+// ---------- Reserve-aanbieders: onthouden wie vandaag "op" is ----------
+let providerState = {};
+chrome.storage.local.get("providerState").then((r) => { providerState = r.providerState || {}; }).catch(() => {});
+async function saveProviderState() {
+  const now = Date.now();
+  for (const k of Object.keys(providerState)) if (!(providerState[k]?.until > now)) delete providerState[k];
+  try { await chrome.storage.local.set({ providerState }); } catch (_) {}
+}
+const providerLabel = (p) => p?.name || "aanbieder";
+function fmtTime(ms) {
+  try { return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch (_) { return ""; }
 }
 
 /** Andere gratis modellen dan het huidige (voor de knoppen "Probeer met …"). */

@@ -60,12 +60,28 @@ Let op: elke *stap* van de agent (een tool-aanroep zoals "pagina lezen" of "zoek
 | --- | --- |
 | Model | Standaard `qwen/qwen3.8-27b:free` (gratis, kan plaatjes zien en tools gebruiken). Met tegoed is `google/gemini-3.5-flash` aanbevolen. "Alle geschikte modellen laden" haalt de actuele lijst op. |
 | Reserve-modellen | Worden automatisch geprobeerd als het eerste model vol of offline is. |
+| Reserve-aanbieders | Andere diensten (Gemini, Groq, Mistral, Ollama…) met een eigen gratis limiet; nemen het over als de daglimiet van de hoofdaanbieder op is. |
 | Zoeken op internet | **DuckDuckGo** (gratis, in je browser) · **OpenRouter web search** (beter, ±$0,007 per zoekopdracht) · Uit |
 | Antwoordtaal | Automatisch (taal van je vraag) of vast NL/EN/FR/DE |
 | Denk-niveau | Laag = snel; Hoog voor pittige wiskunde/natuurkunde |
 | Acties toestaan | Klikken/typen/navigeren aan of uit |
 | Paginatekst / max. stappen | Minder = sneller en goedkoper |
 | Andere server | Bijv. Ollama op je eigen pc: `http://localhost:11434/v1` (zie instellingenpagina) |
+
+## Meer dan 50 vragen per dag? Reserve-aanbieders
+
+**Wat níet werkt:** extra sleutels van hetzelfde OpenRouter-account (de 50/dag geldt per account, niet per sleutel) of meerdere OpenRouter-accounts – dat laatste is uitdrukkelijk verboden in hun [voorwaarden](https://openrouter.ai/terms) (§7.3) en kan alle accounts kosten.
+
+**Wat wél werkt:** andere diensten met een *eigen* gratis limiet toevoegen als **reserve-aanbieder** (Instellingen → 6). Is de daglimiet van de hoofdaanbieder op, dan schakelt de agent automatisch door naar de volgende – midden in een gesprek, zonder dat de AI iets vergeet (de gespreksgeschiedenis zit in de extensie, niet bij de sleutel). In het paneel zie je `· 2/2 reserve` bij de teller en een melding `🔁 OpenRouter vandaag op → verder met Google AI Studio`.
+
+| Aanbieder | Gratis | Sleutel | Opmerking |
+|---|---|---|---|
+| Google AI Studio (Gemini) | gratis tier met eigen daglimiet | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | Model bijv. `gemini-3.8-flash`; reset rond 09:00 NL-tijd |
+| Groq | gratis tier | [console.groq.com/keys](https://console.groq.com/keys) | Kies een model met afbeeldingen + tools uit hun lijst |
+| Mistral | gratis "Experiment"-tier | [console.mistral.ai](https://console.mistral.ai/api-keys) | `mistral-small-latest`; telefoonverificatie |
+| Ollama (eigen pc) | onbeperkt | geen | Zie hieronder; traag zonder goede videokaart |
+
+Voor al deze accounts geldt (net als bij OpenRouter) dat de accounthouder 18+ moet zijn – zie [OUDERS.md](OUDERS.md). Met de knop **Test** bij elke aanbieder controleer je of sleutel, server en modelnaam kloppen.
 
 ## Privacy & veiligheid
 

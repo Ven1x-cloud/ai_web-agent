@@ -35,6 +35,8 @@ De accounthouder is formeel verantwoordelijk voor wat er gepubliceerd wordt. In 
 3. **Chrome Web Store (optioneel):** zelfde idee, met de eenmalige $ 5.
 4. **Website aanzetten (1 min, mag uw kind zelf):** in deze GitHub-repository → *Settings → Pages → Deploy from a branch → map `/docs`*. Daarna staat de uitleg op `https://ven1x-cloud.github.io/ai_web-agent/`.
 
+*Optioneel:* de extensie kan meerdere AI-diensten combineren om meer gratis vragen per dag te hebben (Google AI Studio, Groq, Mistral). Ook daarvoor geldt: gratis tier, geen betaalmethode nodig, account op naam van een volwassene.
+
 ## Liever helemaal geen accounts?
 
 Dat kan ook. De extensie staat al gratis online (downloaden en zelf installeren), en de AI kan volledig op de eigen computer draaien met [Ollama](https://ollama.com) — dan is er geen enkel account nodig en verlaat er niets de computer. Dat vraagt wel een redelijk moderne pc (minimaal 8 GB werkgeheugen) en is trager.

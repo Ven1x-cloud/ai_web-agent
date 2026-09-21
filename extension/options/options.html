@@ -119,7 +119,19 @@
     </section>
 
     <section class="card">
-      <h2>6. Gegevens</h2>
+      <h2>6. Reserve-aanbieders — meer vragen per dag</h2>
+      <p class="muted">Is de daglimiet van je hoofdaanbieder op (bij OpenRouter: 50 gratis vragen), dan schakelt de agent automatisch over naar de eerstvolgende aanbieder hieronder. Het gesprek blijft gewoon bewaard, want dat zit in de extensie en niet bij de sleutel. Elke dienst heeft zijn eigen gratis limiet, dus samen kom je een stuk verder.</p>
+      <p class="muted small"><strong>Let op:</strong> extra sleutels van hetzelfde OpenRouter-account geven géén extra vragen (de limiet geldt per account), en meerdere OpenRouter-accounts maken is verboden in hun voorwaarden. Voeg dus <em>andere</em> diensten toe. Voor deze accounts geldt meestal ook 18+ — vraag een ouder als je jonger bent.</p>
+      <div id="providers"></div>
+      <div class="row" style="margin-top:10px">
+        <select id="providerPreset"></select>
+        <button type="button" id="addProvider">+ Toevoegen</button>
+      </div>
+      <p class="status" id="providerStatus"></p>
+    </section>
+
+    <section class="card">
+      <h2>7. Gegevens</h2>
       <p class="muted">Gesprekken worden alleen lokaal in je browser bewaard. Je API-sleutel blijft op dit apparaat.</p>
       <button type="button" class="danger" id="clearHistory">Alle gesprekken wissen</button>
       <span class="status" id="clearStatus"></span>

@@ -16,6 +16,17 @@ export const CURATED_MODELS = [
   { id: "anthropic/claude-sonnet-4.5", name: "Anthropic Claude Sonnet 4.5", free: false },
 ];
 
+// Reserve-aanbieders: andere diensten met een EIGEN gratis limiet (OpenAI-compatibele API met vision + tools).
+// Let op: meerdere OpenRouter-accounts is verboden in hun voorwaarden en extra sleutels binnen één account delen
+// dezelfde 50/dag. Andere diensten hebben hun eigen limiet – dat is wél toegestaan.
+export const PROVIDER_PRESETS = [
+  { id: "google", name: "Google AI Studio (Gemini)", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-3.8-flash", keysUrl: "https://aistudio.google.com/apikey", note: "Gratis tier met eigen daglimiet (reset om 09:00 NL-tijd). Controleer de modelnaam op aistudio.google.com." },
+  { id: "groq", name: "Groq", baseUrl: "https://api.groq.com/openai/v1", model: "qwen/qwen3.8-27b", keysUrl: "https://console.groq.com/keys", note: "Gratis tier met eigen limieten; kies een model met afbeeldingen + tools uit hun lijst." },
+  { id: "mistral", name: "Mistral", baseUrl: "https://api.mistral.ai/v1", model: "mistral-small-latest", keysUrl: "https://console.mistral.ai/api-keys", note: "Gratis 'Experiment'-tier (telefoonverificatie nodig)." },
+  { id: "ollama", name: "Ollama (op je eigen pc)", baseUrl: "http://localhost:11434/v1", model: "qwen2.5vl:7b", apiKey: "ollama", keysUrl: "https://ollama.com/download", note: "Onbeperkt en gratis. Start Ollama met OLLAMA_ORIGINS=chrome-extension://* en haal een model met `ollama pull qwen2.5vl:7b`." },
+  { id: "custom", name: "Anders (OpenAI-compatibel)", baseUrl: "", model: "", keysUrl: "", note: "Elke server met een OpenAI-compatibele /chat/completions die afbeeldingen en tools ondersteunt." },
+];
+
 export const DEFAULTS = {
   apiKey: "",
   baseUrl: DEFAULT_BASE_URL,
@@ -33,6 +44,7 @@ export const DEFAULTS = {
   userName: "",
   schoolLevel: "", // bijv. "3 havo", "5 vwo" — helpt bij het niveau van de uitleg
   onboarded: false,
+  providers: [], // reserve-aanbieders: [{ id, preset, name, baseUrl, apiKey, model, enabled }]
 };
 
 export async function loadSettings() {
@@ -62,4 +74,50 @@ export function parseModelList(str) {
     .split(/[,\n]/)
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+/** Sleutel om per aanbieder te onthouden dat de daglimiet op is (zonder de hele API-sleutel op te slaan). */
+export function providerKey(p) {
+  return `${p.baseUrl || ""}|${(p.apiKey || "").slice(-6)}`;
+}
+
+/** De hoofdaanbieder (instellingen bovenaan de pagina) in dezelfde vorm als een reserve-aanbieder. */
+export function primaryProvider(settings) {
+  return {
+    id: "primary",
+    name: /openrouter\.ai/.test(settings.baseUrl || "") ? "OpenRouter" : /localhost|127\.0\.0\.1/.test(settings.baseUrl || "") ? "Lokaal model" : "Hoofdaanbieder",
+    baseUrl: settings.baseUrl,
+    apiKey: settings.apiKey,
+    model: settings.model,
+    fallbackModels: settings.fallbackModels,
+    enabled: true,
+  };
+}
+
+function providerUsable(p) {
+  if (!p || p.enabled === false || !p.baseUrl || !p.model) return false;
+  return !!p.apiKey || /localhost|127\.0\.0\.1/.test(p.baseUrl);
+}
+
+/** Hoofdaanbieder + bruikbare reserve-aanbieders, in volgorde. */
+export function providerChain(settings) {
+  return [primaryProvider(settings), ...(settings.providers || []).filter(providerUsable)];
+}
+
+/** Tot wanneer een aanbieder "op" is: eigen resetmoment van de dienst, anders 6 uur. */
+export function nextResetMs(baseUrl, now = Date.now()) {
+  const d = new Date(now);
+  const utcMidnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
+  if (/openrouter\.ai/.test(baseUrl || "")) return utcMidnight; // OpenRouter: 00:00 UTC
+  if (/googleapis\.com/.test(baseUrl || "")) { // Google: middernacht Pacific ≈ 07:00–08:00 UTC
+    let t = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 8);
+    if (t <= now) t += 86_400_000;
+    return t;
+  }
+  return now + 6 * 3_600_000;
+}
+
+export function isExhausted(state, p, now = Date.now()) {
+  const e = state && state[providerKey(p)];
+  return !!(e && e.until > now);
 }

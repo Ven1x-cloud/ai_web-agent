@@ -393,6 +393,79 @@ await test("page: pagina lezen richt zich op het hoofdkader (frame 0) en neemt i
   assert.deepEqual(frames.map((f) => f.frameId), [0, 5], "kaders zonder tekst/velden weglaten, hoofdkader eerst");
 });
 
+const GEMINI = { id: "p_g", preset: "google", name: "Google AI Studio (Gemini)", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", apiKey: "AIza-test", model: "gemini-3.8-flash", enabled: true };
+
+await test("agent: reserve-aanbieder neemt het over als de daglimiet op is – gesprek blijft bewaard", async () => {
+  const p = makePage();
+  const bodies = [];
+  const { calls } = installGlobals(p, (step, body) => {
+    bodies.push(body);
+    if (step === 1) return { status: 429, body: { error: { code: 429, message: "Rate limit exceeded: free-models-per-day" } }, headers: { "X-RateLimit-Reset": String(Date.now() + 3 * 3600e3) } };
+    return textChunks("hallo vanuit gemini", {});
+  });
+  const { runAgent } = await import("../extension/sidepanel/agent.js");
+  const { DEFAULTS, providerKey } = await import("../extension/lib/settings.js");
+  const events = { provider: [], exhausted: [] };
+  const providerState = {};
+  const settings = { ...DEFAULTS, apiKey: "k", searchProvider: "openrouter", providers: [GEMINI, { ...GEMINI, id: "leeg", apiKey: "" }, { ...GEMINI, id: "uit", enabled: false }] };
+  const r = await runAgent({
+    settings, history: [{ role: "user", content: "eerdere vraag over pythagoras" }, { role: "assistant", content: "eerder antwoord" }],
+    userContent: [{ type: "text", text: "en nu de volgende opgave" }], ctx: { getTabId: () => 1, setTabId() {}, windowId: 1 }, retryDelays: [0, 0], providerState,
+    ui: { onProvider: (i) => events.provider.push(i), onExhausted: (prov, until) => events.exhausted.push({ prov, until }) },
+  });
+  assert.equal(r.content, "hallo vanuit gemini");
+  assert.equal(r.provider, "Google AI Studio (Gemini)");
+  assert.equal(r.providerId, "p_g");
+  const urls = calls.filter((c) => c.url.endsWith("/chat/completions")).map((c) => c.url);
+  assert.equal(urls.length, 2, "één poging bij OpenRouter, dan meteen door naar Gemini");
+  assert.match(urls[0], /^https:\/\/openrouter\.ai\//);
+  assert.equal(urls[1], "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions");
+  assert.equal(calls.find((c) => c.url === urls[1]).init.headers.Authorization, "Bearer AIza-test");
+  const g = bodies[1];
+  assert.equal(g.model, "gemini-3.8-flash");
+  assert.ok(!g.usage && !g.models && !g.reasoning, "OpenRouter-specifieke velden niet naar andere aanbieders sturen");
+  assert.ok(!g.tools.some((t) => t.type === "openrouter:web_search"), "server-side zoektool alleen bij OpenRouter");
+  assert.ok(g.tools.some((t) => t.function?.name === "web_search"), "elders valt hij terug op DuckDuckGo-zoeken");
+  assert.ok(g.messages.some((m) => m.role === "user" && /pythagoras/.test(JSON.stringify(m.content))), "eerdere gespreksgeschiedenis gaat mee naar de nieuwe aanbieder");
+  assert.ok(g.messages.some((m) => /volgende opgave/.test(JSON.stringify(m.content))));
+  assert.equal(events.exhausted.length, 1);
+  assert.equal(events.exhausted[0].prov.id, "primary");
+  assert.ok(events.exhausted[0].until > Date.now() + 2 * 3600e3, "resettijd uit de X-RateLimit-Reset-header");
+  assert.ok(providerState[providerKey({ baseUrl: DEFAULTS.baseUrl, apiKey: "k" })]?.until > Date.now());
+  assert.equal(events.provider.length, 1);
+  assert.equal(events.provider[0].reason, "daily_limit");
+  assert.equal(events.provider[0].to.id, "p_g");
+});
+
+await test("agent: aanbieder die vandaag al op is wordt overgeslagen; zonder reserve blijft de fout duidelijk", async () => {
+  const p = makePage();
+  const { calls } = installGlobals(p, () => textChunks("direct via gemini", {}));
+  const { runAgent } = await import("../extension/sidepanel/agent.js");
+  const { DEFAULTS, providerKey, providerChain, nextResetMs, isExhausted } = await import("../extension/lib/settings.js");
+  const settings = { ...DEFAULTS, apiKey: "k", providers: [GEMINI] };
+  const providerState = { [providerKey({ baseUrl: DEFAULTS.baseUrl, apiKey: "k" })]: { until: Date.now() + 3600e3, reason: "daily_limit" } };
+  const events = [];
+  const r = await runAgent({ settings, history: [], userContent: [{ type: "text", text: "hoi" }], ctx: { getTabId: () => 1, setTabId() {}, windowId: 1 }, retryDelays: [0, 0], providerState, ui: { onProvider: (i) => events.push(i) } });
+  assert.equal(r.content, "direct via gemini");
+  assert.equal(calls.filter((c) => c.url.endsWith("/chat/completions")).length, 1);
+  assert.match(calls[0].url, /googleapis\.com/);
+  assert.equal(events[0]?.reason, "exhausted");
+
+  // Zonder reserve-aanbieders: de daglimiet-fout komt gewoon terug (geen eindeloze pogingen).
+  const p2 = makePage();
+  const { calls: calls2 } = installGlobals(p2, () => ({ status: 429, body: { error: { code: 429, message: "Rate limit exceeded: free-models-per-day" } } }));
+  await assert.rejects(runAgent({ settings: { ...DEFAULTS, apiKey: "k" }, history: [], userContent: [{ type: "text", text: "hoi" }], ctx: { getTabId: () => 1, setTabId() {}, windowId: 1 }, retryDelays: [0, 0], providerState: {} }), (e) => e.kind === "daily_limit");
+  assert.equal(calls2.filter((c) => c.url.endsWith("/chat/completions")).length, 1);
+
+  // Hulpfuncties
+  assert.deepEqual(providerChain({ ...DEFAULTS, apiKey: "k", providers: [GEMINI, { ...GEMINI, apiKey: "" }, { ...GEMINI, enabled: false }, { ...GEMINI, model: "" }] }).map((x) => x.id), ["primary", "p_g"]);
+  assert.equal(providerChain({ ...DEFAULTS, apiKey: "k", providers: [{ id: "o", name: "Ollama", baseUrl: "http://localhost:11434/v1", model: "qwen2.5vl:7b", apiKey: "" }] }).length, 2, "lokale server heeft geen sleutel nodig");
+  const t0 = Date.UTC(2026, 8, 21, 14, 0); // 21 sep 2026 14:00 UTC
+  assert.equal(nextResetMs(DEFAULTS.baseUrl, t0), Date.UTC(2026, 8, 22, 0, 0), "OpenRouter reset om 00:00 UTC");
+  assert.equal(nextResetMs(GEMINI.baseUrl, t0), Date.UTC(2026, 8, 22, 8, 0), "Google reset om middernacht Pacific");
+  assert.ok(isExhausted({ x: 1, [providerKey(GEMINI)]: { until: t0 + 1 } }, GEMINI, t0) && !isExhausted({ [providerKey(GEMINI)]: { until: t0 - 1 } }, GEMINI, t0));
+});
+
 await test("agent: tool-budget op → laatste stap dwingt een antwoord af", async () => {
   const p = makePage();
   const bodies = [];

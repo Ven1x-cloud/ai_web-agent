@@ -2,13 +2,14 @@
 // Werkt ook met andere OpenAI-compatibele servers (Ollama, LM Studio) via een andere baseUrl.
 
 export class ApiError extends Error {
-  constructor(message, { status = 0, code = "", data = null, retryAfter = null, kind = "", model = "", provider = "", details = "" } = {}) {
+  constructor(message, { status = 0, code = "", data = null, retryAfter = null, resetAt = null, kind = "", model = "", provider = "", details = "" } = {}) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.data = data;
     this.retryAfter = retryAfter;
+    this.resetAt = resetAt; // epoch ms waarop de limiet reset (indien bekend)
     this.kind = kind; // zie classifyError()
     this.model = model;
     this.provider = provider;
@@ -109,8 +110,10 @@ export function friendlyError(status, data, resetHeader, { model = "" } = {}) {
 function makeApiError(status, data, { resetHeader = null, retryAfter = null, model = "" } = {}) {
   const { msg, raw, provider } = errorText(data);
   const details = [msg, raw].filter(Boolean).join(" — ").slice(0, 400);
+  const resetMs = Number(resetHeader);
   return new ApiError(friendlyError(status, data, resetHeader, { model }), {
-    status, code: data?.error?.code || "", data, retryAfter, kind: classifyError(status, data), model, provider, details,
+    status, code: data?.error?.code || "", data, retryAfter, resetAt: resetMs > 1e12 ? resetMs : null,
+    kind: classifyError(status, data), model, provider, details,
   });
 }
 

@@ -2,7 +2,7 @@
 import { streamChat, ApiError } from "../lib/openrouter.js";
 import { buildSystemPrompt, PAGE_CTX_START, PAGE_CTX_END } from "../lib/prompts.js";
 import { buildTools, executeTool, describeToolCall } from "./tools.js";
-import { parseModelList } from "../lib/settings.js";
+import { parseModelList, providerChain, providerKey, isExhausted, nextResetMs } from "../lib/settings.js";
 
 /** Maakt oudere berichten compact (geen oude pagina-snapshots/afbeeldingen meesturen). */
 export function compactHistory(messages, { keepRecentUsers = 0, maxMessages = 40 } = {}) {
@@ -76,22 +76,53 @@ function toApiMessages(messages) {
  * @param {Array} p.history  eerdere berichten (API-formaat, zonder system)
  * @param {Array} p.userContent  content-array voor het nieuwe user-bericht
  * @param {object} p.ctx  { getTabId, setTabId, windowId, tabTitle, tabUrl }
- * @param {object} p.ui  callbacks: onText, onReasoning, onToolStart, onToolEnd, onStep, onRetry
+ * @param {object} p.ui  callbacks: onText, onReasoning, onToolStart, onToolEnd, onStep, onRetry, onProvider, onExhausted
  * @param {AbortSignal} p.signal
  * @param {number[]} [p.retryDelays]  wachttijden (ms) voor automatische nieuwe pogingen bij drukte; lengte = max. aantal extra pogingen
- * @returns {Promise<{messages:Array, content:string, cost:number, model:string, steps:number, truncated:boolean}>}  messages = nieuwe assistant/tool-berichten (zonder het user-bericht)
+ * @param {object} [p.providerState]  { [providerKey]: { until, reason } } – aanbieders waarvan de daglimiet op is
+ * @returns {Promise<{messages:Array, content:string, cost:number, model:string, provider:string, providerId:string, steps:number, truncated:boolean}>}  messages = nieuwe assistant/tool-berichten (zonder het user-bericht)
  */
-export async function runAgent({ settings, history, userContent, ctx, ui = {}, signal, retryDelays = DEFAULT_RETRY_DELAYS }) {
+export async function runAgent({ settings, history, userContent, ctx, ui = {}, signal, retryDelays = DEFAULT_RETRY_DELAYS, providerState = {} }) {
   const system = { role: "system", content: buildSystemPrompt(settings, { tabTitle: ctx.tabTitle, tabUrl: ctx.tabUrl }) };
   const newMessages = [{ role: "user", content: userContent }];
-  const tools = buildTools(settings);
-  const isOpenRouter = /openrouter\.ai/.test(settings.baseUrl || "");
-  // Kandidaat-modellen: het gekozen model eerst, dan de reserve-modellen. Bij drukte (429/5xx) schuift de lijst door.
-  let candidates = [...new Set([settings.model, ...parseModelList(settings.fallbackModels)].filter(Boolean))];
   let cost = 0, usedModel = "", steps = 0, finalContent = "", truncated = false;
   const maxSteps = Math.max(1, Math.min(25, Number(settings.maxSteps) || 10));
 
-  const call = (body) => streamChat({ baseUrl: settings.baseUrl, apiKey: settings.apiKey, body, signal }, {
+  // Aanbieders: hoofdaanbieder eerst, dan reserve-aanbieders; wie vandaag "op" is wordt overgeslagen.
+  // Het gesprek zit in `messages` (in de extensie), dus bij een wissel vergeet de AI niets.
+  const chain = providerChain(settings);
+  let available = chain.filter((p) => !isExhausted(providerState, p));
+  if (!available.length) available = chain.slice(); // alles gemarkeerd als op → toch proberen (status kan verouderd zijn)
+  let provider = available.shift();
+  let isOpenRouter, candidates, tools;
+  const useProvider = (p) => {
+    provider = p;
+    isOpenRouter = /openrouter\.ai/.test(p.baseUrl || "");
+    // Kandidaat-modellen: het gekozen model eerst, dan de reserve-modellen. Bij drukte (429/5xx) schuift de lijst door.
+    candidates = [...new Set([...parseModelList(p.model), ...parseModelList(p.fallbackModels)].filter(Boolean))];
+    // De server-side zoektool bestaat alleen bij OpenRouter; elders valt hij terug op DuckDuckGo.
+    const searchProvider = settings.searchProvider === "openrouter" && !isOpenRouter ? "duckduckgo" : settings.searchProvider;
+    tools = buildTools({ ...settings, baseUrl: p.baseUrl, searchProvider });
+  };
+  useProvider(provider);
+  if (provider.id !== "primary") ui.onProvider?.({ from: chain[0], to: provider, reason: "exhausted", error: null });
+
+  const markExhausted = (p, err) => {
+    const until = err?.resetAt || nextResetMs(p.baseUrl);
+    providerState[providerKey(p)] = { until, reason: err?.kind || "" };
+    ui.onExhausted?.(p, until, err);
+  };
+  /** Naar de volgende aanbieder; false als er geen meer is. */
+  const switchProvider = (err, reason) => {
+    const next = available.shift();
+    if (!next) return false;
+    const from = provider;
+    useProvider(next);
+    ui.onProvider?.({ from, to: next, reason, error: err });
+    return true;
+  };
+
+  const call = (body) => streamChat({ baseUrl: provider.baseUrl, apiKey: provider.apiKey, body, signal }, {
     onText: (_d, full) => ui.onText?.(full),
     onReasoning: (_d, full) => ui.onReasoning?.(full),
     onToolCallStart: (name) => ui.onToolPending?.(name),
@@ -114,9 +145,11 @@ export async function runAgent({ settings, history, userContent, ctx, ui = {}, s
       const body = { model: candidates[0], messages, tools, tool_choice: steps === maxSteps ? "none" : "auto" };
       if (!minimalBody) {
         body.temperature = Number.isFinite(Number(settings.temperature)) ? Number(settings.temperature) : 0.4;
-        body.usage = { include: true };
-        if (candidates.length > 1 && isOpenRouter) body.models = candidates; // server-side reserve-modellen
-        if (settings.reasoning && settings.reasoning !== "auto") body.reasoning = { effort: settings.reasoning };
+        if (isOpenRouter) {
+          body.usage = { include: true };
+          if (candidates.length > 1) body.models = candidates; // server-side reserve-modellen
+          if (settings.reasoning && settings.reasoning !== "auto") body.reasoning = { effort: settings.reasoning };
+        }
       }
       try {
         result = await call(body);
@@ -125,16 +158,25 @@ export async function runAgent({ settings, history, userContent, ctx, ui = {}, s
         if (!(e instanceof ApiError) || signal?.aborted) throw e;
         // Sommige providers weigeren `reasoning`/`models`/`usage`/`temperature`; probeer één keer met een minimale body.
         if (e.status === 400 && !minimalBody) { minimalBody = true; continue; }
+        // Daglimiet op, geen tegoed of sleutel ongeldig: deze aanbieder is vandaag klaar → volgende aanbieder.
+        if (e.kind === "daily_limit" || e.kind === "credits" || e.kind === "auth") {
+          if (e.kind !== "auth") markExhausted(provider, e);
+          if (switchProvider(e, e.kind)) { attempt = 0; minimalBody = false; continue; }
+          throw e;
+        }
         // Drukte bij de aanbieder (429 "Provider returned error", 5xx) of minuutlimiet: even wachten en
-        // met het volgende model verder. De daglimiet (50/dag) is definitief → direct melden.
-        if (e.transient && attempt < retryDelays.length) {
-          const waitMs = retryWait(e, retryDelays[attempt]);
-          attempt++;
-          const from = candidates[0];
-          if (e.kind !== "minute_limit" && candidates.length > 1) candidates = [...candidates.slice(1), from];
-          ui.onRetry?.({ attempt, max: retryDelays.length, from, to: candidates[0], waitMs, error: e });
-          await sleep(waitMs, signal);
-          continue;
+        // met het volgende model verder; daarna eventueel naar de volgende aanbieder.
+        if (e.transient) {
+          if (attempt < retryDelays.length) {
+            const waitMs = retryWait(e, retryDelays[attempt]);
+            attempt++;
+            const from = candidates[0];
+            if (e.kind !== "minute_limit" && candidates.length > 1) candidates = [...candidates.slice(1), from];
+            ui.onRetry?.({ attempt, max: retryDelays.length, from, to: candidates[0], waitMs, error: e });
+            await sleep(waitMs, signal);
+            continue;
+          }
+          if (switchProvider(e, "busy")) { attempt = 0; minimalBody = false; continue; }
         }
         throw e;
       }
@@ -188,5 +230,5 @@ export async function runAgent({ settings, history, userContent, ctx, ui = {}, s
   }
 
   // Het user-bericht zelf zit al bij de aanroeper; alleen de nieuwe assistant/tool-berichten teruggeven.
-  return { messages: newMessages.slice(1), content: finalContent, cost, model: usedModel, steps, truncated };
+  return { messages: newMessages.slice(1), content: finalContent, cost, model: usedModel, provider: provider.name, providerId: provider.id, steps, truncated };
 }
