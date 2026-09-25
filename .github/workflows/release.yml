@@ -1,0 +1,63 @@
+# Bouwt de extensie-ZIP en publiceert die als GitHub-release.
+#
+#   git tag v0.2.0 && git push origin v0.2.0   → release "v0.2.0" met ai-web-agent.zip eraan
+#
+# De vaste downloadlink is daarna altijd:
+#   https://github.com/Ven1x-cloud/ai_web-agent/releases/latest/download/ai-web-agent.zip
+# Handmatig starten (Actions → Release → Run workflow) levert alleen een download-artefact op, geen release.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Afhankelijkheden (alleen voor lint/tests)
+        run: npm ci
+
+      - name: Controles en tests
+        run: |
+          node scripts/check.mjs
+          node test/e2e.mjs
+
+      - name: Versie in manifest moet bij de tag passen
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          MANIFEST_VERSION=$(node -p "require('./extension/manifest.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$MANIFEST_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Tag is v$TAG_VERSION maar extension/manifest.json zegt $MANIFEST_VERSION. Pas de versie aan en tag opnieuw."
+            exit 1
+          fi
+
+      - name: ZIP bouwen
+        run: node scripts/package.mjs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-web-agent
+          path: release/*.zip
+
+      - name: GitHub-release maken
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/ai-web-agent.zip "release/ai-web-agent-v${GITHUB_REF_NAME#v}.zip" \
+            --title "AI Web Agent $GITHUB_REF_NAME" \
+            --generate-notes \
+            --notes "**Installeren:** download \`ai-web-agent.zip\`, pak uit, ga naar \`chrome://extensions\`, zet *Ontwikkelaarsmodus* aan en kies *Uitgepakte extensie laden* → de uitgepakte map. Uitleg: https://ven1x-cloud.github.io/ai_web-agent/"

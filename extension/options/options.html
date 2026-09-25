@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Web Agent – Instellingen</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <header class="head">
+    <img src="../icons/icon48.png" alt="" width="40" height="40">
+    <div>
+      <h1>AI Web Agent</h1>
+      <p>Instellingen · wijzigingen worden automatisch opgeslagen</p>
+    </div>
+    <span class="saved" id="saved">Opgeslagen ✓</span>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>1. Verbinding met OpenRouter</h2>
+      <p class="muted">De agent gebruikt <a href="https://openrouter.ai" target="_blank" rel="noopener">OpenRouter</a> om met AI-modellen te praten. Maak een account, ga naar <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener">Keys</a>, maak een sleutel en plak die hier. Met een gratis model kost dit <strong>niets</strong> (50 vragen per dag; 1000 per dag als er ooit eenmalig $10 tegoed is gekocht).</p>
+      <label class="field">
+        <span>API-sleutel</span>
+        <span class="row">
+          <input type="password" id="apiKey" placeholder="sk-or-v1-…" autocomplete="off" spellcheck="false">
+          <button type="button" class="ghost" id="toggleKey" title="Tonen/verbergen">👁</button>
+          <button type="button" id="testKey">Test verbinding</button>
+        </span>
+      </label>
+      <p class="status" id="keyStatus"></p>
+      <details>
+        <summary>Geavanceerd: andere server (bijv. Ollama / LM Studio op je eigen pc)</summary>
+        <label class="field">
+          <span>API-basis-URL</span>
+          <input type="text" id="baseUrl" placeholder="https://openrouter.ai/api/v1">
+        </label>
+        <p class="muted small">Voor een lokaal model met Ollama: installeer <a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a>, start het met <code>OLLAMA_ORIGINS="chrome-extension://*" ollama serve</code>, haal een vision-model op (bijv. <code>ollama pull gemma3:12b</code> of <code>qwen2.5vl:7b</code>), vul hier <code>http://localhost:11434/v1</code> in en typ de modelnaam hieronder bij “Eigen model-ID”. Een API-sleutel is dan niet nodig (vul iets in, bijv. <code>ollama</code>). Let op: lokale modellen zijn trager en minder slim dan de online modellen, en internet zoeken werkt dan alleen via DuckDuckGo.</p>
+      </details>
+    </section>
+
+    <section class="card">
+      <h2>2. Model</h2>
+      <label class="field">
+        <span>Model</span>
+        <select id="model"></select>
+      </label>
+      <div class="row wrap">
+        <button type="button" class="ghost" id="loadModels">Alle geschikte modellen laden (met afbeeldingen + tools)</button>
+        <label class="inline"><input type="checkbox" id="onlyFree"> alleen gratis tonen</label>
+      </div>
+      <label class="field">
+        <span>Eigen model-ID (optioneel, overschrijft de keuze hierboven)</span>
+        <input type="text" id="customModel" placeholder="bijv. google/gemini-3.5-flash of llama3.2-vision">
+      </label>
+      <label class="field">
+        <span>Reserve-modellen (komma-gescheiden). Als het eerste model overbelast is (fout 429 “Provider returned error”) of offline, schakelt de agent na een korte pauze automatisch over naar het volgende.</span>
+        <input type="text" id="fallbackModels" placeholder="qwen/qwen3.8-27b:free, google/gemma-4-31b-it:free, thinkingmachines/inkling:free">
+      </label>
+      <p class="muted small">Tip: gratis modellen zijn soms druk of traag. Met tegoed is <strong>google/gemini-3.5-flash</strong> een sterke, goedkope keuze (ongeveer $0,75 per miljoen invoertekens; een gemiddelde vraag met pagina kost minder dan een cent).</p>
+    </section>
+
+    <section class="card">
+      <h2>3. Zoeken op internet</h2>
+      <label class="radio"><input type="radio" name="searchProvider" value="duckduckgo"> <span><strong>DuckDuckGo</strong> in je eigen browser — gratis, geen tegoed nodig (aanbevolen zonder tegoed)</span></label>
+      <label class="radio"><input type="radio" name="searchProvider" value="openrouter"> <span><strong>OpenRouter web search</strong> — betere resultaten, kost ongeveer $0,007 per zoekopdracht van je tegoed</span></label>
+      <label class="radio"><input type="radio" name="searchProvider" value="off"> <span>Uit — nooit op internet zoeken</span></label>
+    </section>
+
+    <section class="card">
+      <h2>4. Antwoorden</h2>
+      <div class="grid">
+        <label class="field">
+          <span>Antwoordtaal</span>
+          <select id="answerLanguage">
+            <option value="auto">Automatisch (taal van je vraag)</option>
+            <option value="nl">Altijd Nederlands</option>
+            <option value="en">Altijd Engels</option>
+            <option value="fr">Altijd Frans</option>
+            <option value="de">Altijd Duits</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Denk-niveau (redeneren)</span>
+          <select id="reasoning">
+            <option value="auto">Standaard van het model</option>
+            <option value="low">Laag (snel, goedkoop)</option>
+            <option value="medium">Gemiddeld</option>
+            <option value="high">Hoog (moeilijke wiskunde/natuurkunde)</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Je naam (optioneel)</span>
+          <input type="text" id="userName" placeholder="bijv. Sam">
+        </label>
+        <label class="field">
+          <span>Schoolniveau/klas (optioneel)</span>
+          <input type="text" id="schoolLevel" placeholder="bijv. 3 havo, 5 vwo, mbo 4">
+        </label>
+      </div>
+      <label class="inline"><input type="checkbox" id="showReasoning"> Denkproces van het model tonen (als het model dat meestuurt)</label>
+    </section>
+
+    <section class="card">
+      <h2>5. Wat mag de agent?</h2>
+      <label class="inline"><input type="checkbox" id="allowActions"> Op de pagina klikken, typen, scrollen en naar andere pagina's gaan (voor irreversibele acties vraagt hij eerst)</label>
+      <label class="inline"><input type="checkbox" id="includePage"> Tekst van de huidige pagina standaard meesturen met elke vraag</label>
+      <div class="grid">
+        <label class="field">
+          <span>Max. tekens paginatekst per vraag</span>
+          <input type="number" id="pageChars" min="1000" max="30000" step="500">
+        </label>
+        <label class="field">
+          <span>Max. stappen (tool-aanroepen) per vraag</span>
+          <input type="number" id="maxSteps" min="1" max="25" step="1">
+        </label>
+      </div>
+      <p class="muted small">Elke stap is één verzoek aan het model. Bij gratis modellen tellen die mee voor de daglimiet (50). Minder tekens en stappen = goedkoper en sneller.</p>
+    </section>
+
+    <section class="card">
+      <h2>6. Reserve-aanbieders — meer vragen per dag</h2>
+      <p class="muted">Is de daglimiet van je hoofdaanbieder op (bij OpenRouter: 50 gratis vragen), dan schakelt de agent automatisch over naar de eerstvolgende aanbieder hieronder. Het gesprek blijft gewoon bewaard, want dat zit in de extensie en niet bij de sleutel. Elke dienst heeft zijn eigen gratis limiet, dus samen kom je een stuk verder.</p>
+      <p class="muted small"><strong>Let op:</strong> extra sleutels van hetzelfde OpenRouter-account geven géén extra vragen (de limiet geldt per account), en meerdere OpenRouter-accounts maken is verboden in hun voorwaarden. Voeg dus <em>andere</em> diensten toe. Voor deze accounts geldt meestal ook 18+ — vraag een ouder als je jonger bent.</p>
+      <div id="providers"></div>
+      <div class="row" style="margin-top:10px">
+        <select id="providerPreset"></select>
+        <button type="button" id="addProvider">+ Toevoegen</button>
+      </div>
+      <p class="status" id="providerStatus"></p>
+    </section>
+
+    <section class="card">
+      <h2>7. Gegevens</h2>
+      <p class="muted">Gesprekken worden alleen lokaal in je browser bewaard. Je API-sleutel blijft op dit apparaat.</p>
+      <button type="button" class="danger" id="clearHistory">Alle gesprekken wissen</button>
+      <span class="status" id="clearStatus"></span>
+    </section>
+
+    <section class="card help">
+      <h2>Hoe gebruik je de agent?</h2>
+      <ul>
+        <li>Klik op het icoon (of <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Y</kbd>) → het zijpaneel opent naast de website.</li>
+        <li>Stel je vraag; de tekst van de pagina gaat automatisch mee. Zeg bijvoorbeeld: “Leg opgave 3 uit”, “Vertaal deze tekst”, “Wat staat er in de grafiek?”, “Zoek op wanneer dit gebeurd is”, “Vul mijn naam in bij het formulier”.</li>
+        <li>Selecteer tekst op een pagina → rechtermuisknop → “Vraag AI Web Agent”. Of rechtermuisknop op een afbeelding → “Afbeelding bekijken met AI Web Agent”.</li>
+        <li>Plak (Ctrl+V) of sleep een foto van je huiswerk in het paneel, of klik 📷 om een screenshot mee te sturen.</li>
+        <li>Wissel van tabblad: het paneel volgt automatisch de actieve website.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>
