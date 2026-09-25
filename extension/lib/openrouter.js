@@ -89,7 +89,7 @@ export function friendlyError(status, data, resetHeader, { model = "" } = {}) {
         if (ms > 1e12) when = ` Reset om ${new Date(ms).toLocaleTimeString()}.`;
       }
       if (kind === "daily_limit") {
-        return "Je gratis daglimiet is op: 50 per dag zonder tegoed (1000 per dag na eenmalig $10 tegoed). De teller reset om 00:00 UTC (01:00/02:00 Nederlandse tijd)." + when
+        return "Je gratis daglimiet is op: 50 vragen per dag (elke stap van de agent telt als 1 vraag — het gaat om vragen, niet om tokens). Koop je eenmalig $10 tegoed, dan wordt dat 1.000 vragen per dag, en dat blijft zo ook al is het tegoed later op. De teller reset om 00:00 UTC (01:00/02:00 Nederlandse tijd)." + when
           + " Tip: met een lokaal Ollama-model (zie Instellingen) kun je nu wél verder.";
       }
       if (kind === "minute_limit") {

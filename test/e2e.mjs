@@ -205,7 +205,7 @@ await test("openrouter: HTTP-fouten worden vertaald naar begrijpelijke meldingen
     ? { status: 429, body: { error: { code: 429, message: "Rate limit exceeded: free-models-per-day" } }, headers: { "X-RateLimit-Reset": String(Date.now() + 3600e3) } }
     : { status: 401, body: { error: { code: 401, message: "No auth credentials found" } } }));
   const { streamChat, ApiError } = await import("../extension/lib/openrouter.js");
-  await assert.rejects(streamChat({ baseUrl: "https://openrouter.ai/api/v1", apiKey: "k", body: {} }), (e) => e instanceof ApiError && e.status === 429 && /50 per dag/.test(e.message));
+  await assert.rejects(streamChat({ baseUrl: "https://openrouter.ai/api/v1", apiKey: "k", body: {} }), (e) => e instanceof ApiError && e.status === 429 && /50 vragen per dag/.test(e.message) && /niet om tokens/.test(e.message) && /1\.000 vragen per dag/.test(e.message));
   await assert.rejects(streamChat({ baseUrl: "https://openrouter.ai/api/v1", apiKey: "k", body: {} }), (e) => e.status === 401 && /API-sleutel/.test(e.message));
 });
 
