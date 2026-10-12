@@ -7,6 +7,7 @@ Een "preset" is gewoon een set getallen; je kunt ze ook los overschrijven via de
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import asdict, dataclass, field, fields
 from typing import Any, Dict
@@ -233,11 +234,28 @@ class GenConfig:
         return d
 
 
+def json_safe(obj: Any) -> Any:
+    """Vervangt NaN en oneindig door `None`, zodat de uitvoer geldige JSON is.
+
+    Python schrijft `NaN` en `Infinity` gewoon weg, maar dat is géén geldige
+    JSON: `JSON.parse` in de browser gooit het antwoord dan weg. Omdat verliezen
+    tijdens trainen NaN kunnen zijn, zou één zo'n getal de hele
+    instellingenpagina kunnen laten stranden. Vandaar deze omzetting op één plek.
+    """
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [json_safe(v) for v in obj]
+    return obj
+
+
 def save_json(path: str, obj: Any) -> None:
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(obj, fh, ensure_ascii=False, indent=2)
+        json.dump(json_safe(obj), fh, ensure_ascii=False, indent=2, allow_nan=False)
     os.replace(tmp, path)
 
 

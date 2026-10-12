@@ -151,14 +151,21 @@ Of zet eigen tekst (`.txt`, `.md`, `.jsonl`) in `ai/data/learned/`.
 | Trainingsdata | Wat je dan krijgt |
 | --- | --- |
 | ±12.000 tokens | Kent de voorbeelden uit zijn hoofd; daarbuiten **woordensoep** |
-| ±98.000 tokens *(nu)* | Overfit niet meer en pakt patronen, maar nog geen vloeiende zinnen |
+| ±98.000 tokens *(nu)* | Rond het optimum evenwichtig (train 2,70 / eval 2,78), maar de output blijft woordensoep |
 | ±1 miljoen tokens | Echte zinnen, redelijke grammatica, geen betrouwbare feiten |
 | ±50 miljoen tokens | Leesbaar Nederlands over bekende onderwerpen |
+
+Gemeten op de meegeleverde data: **beste eval-verlies 2,78** na 15 minuten trainen op
+een gewone laptop. Bruikbaar begint rond 2,0 — daar is dus nog een factor tien aan
+data voor nodig. De antwoorden die er nu uit komen zijn losse lettergrepen, geen
+zinnen; wie dat verwacht komt bedrogen uit.
 
 `python -m webai info` laat zien waar je staat, en waarschuwt vanzelf als het model
 aan het overfitten is (dan kent het zijn voorbeelden uit zijn hoofd in plaats van
 taal te leren). Het getal dat telt is het **eval-verlies**: hoe goed het is op
-voorbeelden die het nooit gezien heeft.
+voorbeelden die het nooit gezien heeft. Trainen stopt vanzelf zodra dat getal niet
+meer verbetert, en het beste moment wordt bewaard als `best.npz` — te lang doorgaan
+kost dus tijd, maar geen kwaliteit.
 
 Alles staat in **[ai/README.md](ai/README.md)**: installatie, presets, alle
 commando's, de HTTP-API, hoe het gebouwd is, en wat er nodig is om het echt goed te
@@ -193,7 +200,7 @@ ai/                      ← JE EIGEN AI, los van de extensie (Python, alleen Nu
   data/seed/             meegeleverde voorbeelden (.jsonl)
   data/learned/          wat jij toevoegt of laat maken (niet in Git)
   runs/                  getrainde modellen (niet in Git)
-  tests/                 165 tests: gradcheck, echte HTTP-server, en de seeddata zelf
+  tests/                 178 tests: gradcheck, echte HTTP-server, en de seeddata zelf
 extension/
   manifest.json          Manifest V3 (zijpaneel, contextmenu's, scripting, <all_urls>)
   background.js          Service worker: paneel openen, contextmenu's
@@ -223,7 +230,7 @@ npm install          # dev-dependencies (eslint, jsdom, libs voor vendor)
 npm run vendor       # vendor-bestanden verversen na een update van marked/dompurify/katex
 npm run check        # manifest + verwijzingen + eslint
 npm test             # e2e-tests (jsdom + nep-OpenRouter), 20 tests
-npm run test:ai      # tests van het eigen AI-model (Python), 165 tests
+npm run test:ai      # tests van het eigen AI-model (Python), 178 tests
 npm run test:all     # beide suites achter elkaar
 npm run package      # release/ai-web-agent.zip bouwen (voor winkels of een GitHub-release)
 python3 scripts/make-icons.py   # iconen opnieuw genereren (Pillow)

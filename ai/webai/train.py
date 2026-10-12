@@ -26,6 +26,7 @@ from .config import (
     TrainConfig,
     configs_from_preset,
     ensure_dirs,
+    json_safe,
     load_json,
     save_json,
 )
@@ -198,7 +199,9 @@ class TrainResult:
     history: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        # json_safe: een NaN-verlies mag geen ongeldige JSON opleveren, want
+        # JSON.parse in de browser (en veel andere parsers) weigert dat.
+        return json_safe({
             "run_name": self.run_name,
             "steps": self.steps,
             "final_loss": round(self.final_loss, 4),
@@ -206,7 +209,7 @@ class TrainResult:
             "tokens_seen": self.tokens_seen,
             "seconds": round(self.seconds, 1),
             "params": self.params,
-        }
+        })
 
 
 def accumulate(grads: Dict[str, np.ndarray], new: Dict[str, np.ndarray], scale: float) -> None:
@@ -254,6 +257,44 @@ def rotate_checkpoints(directory: str, keep: int, prefix: str = "step") -> None:
                     os.remove(path)
                 except OSError:
                     pass
+
+
+def planned_epochs(n_train_samples: int, batch_size: int, max_steps: int) -> float:
+    """Hoe vaak het model zijn hele trainingsset te zien krijgt."""
+    per_epoch = max(1, n_train_samples // max(1, batch_size))
+    return max_steps / per_epoch
+
+
+def auto_early_stop_patience(n_train_samples: int, batch_size: int, max_steps: int,
+                             patience: int = 0, sample_floor: int = 300,
+                             epoch_ceiling: float = 25.0) -> int:
+    """Beslist of vroeg stoppen automatisch aan moet, en met welke patience.
+
+    Een expliciet gekozen patience wint altijd; een negatief getal betekent
+    "bewust uit" (dat is hoe `--no-early-stop` het doorgeeft). Anders zijn er twee redenen om
+    het aan te zetten:
+
+    1. **Weinig voorbeelden** (minder dan `sample_floor`). Dan is uit-het-hoofd
+       leren bijna onvermijdelijk.
+    2. **Veel ronden** (meer dan `epoch_ceiling`). Dit is de sterkere regel: bij
+       een kleine dataset stapelen de ronden zich razendsnel op, ook als het
+       absolute aantal samples best meevalt.
+
+    Regel 2 alleen had niet gereikt. Een meting op de meegeleverde dataset
+    (484 trainingsvoorbeelden, batch 16, 2500 stappen) liet het optimum zien bij
+    stap 400 — 13 ronden — met een eval-verlies van 2,78. Daarna liep het op naar
+    3,04 terwijl het trainverlies bleef dalen naar 2,36. Omdat 484 boven de oude
+    grens van 300 lag, greep de bewaking niet in en trainde hij 450 stappen door
+    in een richting die alleen maar slechter werd.
+    """
+    if patience > 0:
+        return patience
+    if patience < 0:
+        return 0            # bewust uitgezet via --no-early-stop
+    epochs = planned_epochs(n_train_samples, batch_size, max_steps)
+    if n_train_samples < sample_floor or epochs > epoch_ceiling:
+        return 4
+    return 0
 
 
 def train(
@@ -317,15 +358,32 @@ def train(
     # --- model ---
     start_step = 0
     best_eval: Optional[float] = None
-    if resume and checkpoint_exists(train_cfg.run_name):
+    resumed_best_step: Optional[int] = None
+    saved_loss: Optional[float] = None
+    saved_tokens: int = 0
+    if resume and checkpoint_exists(train_cfg.run_name, root):
         model, meta = TransformerLM.load(directory)
+        # De preset zegt bijvoorbeeld context 256, maar dit model is misschien
+        # op 512 getraind. Neem de werkelijke vorm over, anders logt en toont
+        # train een andere context dan het model echt heeft.
+        model_cfg = model.cfg
         saved = load_json(state_path(train_cfg.run_name, root), {}) or {}
         start_step = int(saved.get("step", 0))
         best_eval = saved.get("best_eval")
+        saved_loss = saved.get("loss")
+        saved_tokens = int(saved.get("tokens_seen") or 0)
+        # Zonder dit valt "beste checkpoint" bij hervatten terug op de startstap,
+        # terwijl het optimum vaak veel eerder lag. Oudere statusbestanden hebben
+        # het veld niet; die vallen terug op de metadata van best.npz.
+        resumed_best_step = saved.get("best_step")
+        if resumed_best_step is None:
+            best_meta = load_json(os.path.join(run_dir(train_cfg.run_name, root),
+                                               "best.json"), {}) or {}
+            resumed_best_step = best_meta.get("step")
         if verbose:
             print(f"[train] hervat vanaf stap {start_step} "
                   f"(verlies {saved.get('loss', '?')})")
-    elif init_from and checkpoint_exists(init_from):
+    elif init_from and checkpoint_exists(init_from, root):
         model, meta = TransformerLM.load(run_dir(init_from, root))
         if model.cfg.vocab_size != model_cfg.vocab_size:
             raise SystemExit(
@@ -360,6 +418,23 @@ def train(
         max_steps = start_step + int(train_cfg.epochs * max(1, steps_per_epoch))
     else:
         max_steps = train_cfg.max_steps
+
+    # Hervatten met een stap-aantal dat al gepasseerd is zou nul stappen trainen
+    # en dan toch het model en de status overschrijven — met een NaN-verlies erin.
+    # Beter: duidelijk zeggen dat er niets te doen is en niets aanraken.
+    if start_step > 0 and max_steps <= start_step:
+        if verbose:
+            print(f"[train] dit model staat al op stap {start_step}; er is niets te doen "
+                  f"tot stap {max_steps}.")
+            print(f"[train] wil je verder, geef dan meer stappen mee, bijvoorbeeld "
+                  f"--steps {start_step + 500}.")
+        return TrainResult(
+            run_name=train_cfg.run_name, steps=start_step,
+            final_loss=float(saved_loss) if saved_loss is not None else float("nan"),
+            best_eval=best_eval, tokens_seen=saved_tokens, seconds=0.0,
+            params=n_params, history=[],
+        )
+
     train_cfg.max_steps = max(1, max_steps)  # voor het leerplannen
     if verbose:
         print(f"[train] {train_cfg.max_steps - start_step} stappen "
@@ -368,14 +443,25 @@ def train(
     # --- lus ---
     # Bij weinig data is overfitten bijna onvermijdelijk: zet vroeg stoppen dan
     # automatisch aan, zodat je niet 600 stappen wacht op een slechter model.
-    patience = train_cfg.early_stop_patience
-    if patience <= 0 and len(train_samples) < 300:
-        patience = 4
+    # Bij weinig data óf bij veel geplande ronden is overfitten bijna
+    # onvermijdelijk: zet vroeg stoppen dan automatisch aan, zodat je niet
+    # honderden stappen wacht op een model dat alleen maar slechter wordt.
+    patience = auto_early_stop_patience(
+        len(train_samples), train_cfg.batch_size, train_cfg.max_steps,
+        train_cfg.early_stop_patience,
+    )
+    if patience > 0 and train_cfg.early_stop_patience <= 0:
+        epochs = planned_epochs(len(train_samples), train_cfg.batch_size,
+                                train_cfg.max_steps)
         if verbose:
-            print(f"[train] weinig data ({len(train_samples)} samples) → vroeg stoppen "
+            reden = ("weinig data" if len(train_samples) < 300
+                     else f"±{epochs:.0f} ronden over dezelfde data")
+            print(f"[train] {reden} ({len(train_samples)} samples) → vroeg stoppen "
                   f"staat automatisch aan (patience {patience})")
     stale = 0
-    best_step = start_step
+    # Bij een verse start is de beste stap gewoon de beginstap; bij hervatten
+    # nemen we over waar het optimum werkelijk lag.
+    best_step = resumed_best_step if resumed_best_step is not None else start_step
     overfit_warned = False
     early_stopped = False
 
@@ -384,7 +470,9 @@ def train(
     batch_iter = batcher.batches()
     running = 0.0
     running_n = 0
-    tokens_seen = 0
+    # Bij hervatten telt de eerdere stand mee, anders rapporteert elke hervatting
+    # alleen zijn eigen tokens en lijkt het model veel minder getraind dan het is.
+    tokens_seen = saved_tokens if resume else 0
     t0 = time.time()
     step = start_step
     accum = max(1, int(train_cfg.grad_accum or 1))
@@ -490,6 +578,7 @@ def train(
                     "loss": history[-1]["loss"] if history else None,
                     "eval_loss": history[-1].get("eval_loss") if history else None,
                     "best_eval": best_eval,
+                    "best_step": best_step,
                     "tokens_seen": tokens_seen,
                     "run_name": train_cfg.run_name,
                     "model": model_cfg.to_dict(),
@@ -523,6 +612,7 @@ def train(
     })
     save_json(state_path(train_cfg.run_name, root), {
         "step": step, "loss": final_loss, "best_eval": best_eval,
+        "best_step": best_step,
         "tokens_seen": tokens_seen, "run_name": train_cfg.run_name,
         "model": model_cfg.to_dict(), "train": train_cfg.to_dict(),
         "saved_at": time.time(),

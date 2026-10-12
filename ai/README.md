@@ -17,7 +17,7 @@ ai/
 │   ├── seed/       voorbeelden die meekomen in de broncode
 │   └── learned/    wat jíj toevoegt of laat maken (staat niet in Git)
 ├── runs/           getrainde modellen (staat niet in Git)
-└── tests/          165 tests die alles controleren
+└── tests/          178 tests die alles controleren
 ```
 
 ---
@@ -42,17 +42,29 @@ biljoenen tokens. Het verschil is een factor miljoen of meer.
 | ±1 miljard tokens | Pas dan wordt het een bruikbare gesprekspartner voor eenvoudige vragen. |
 
 **Concreet betekent dat:** met de meegeleverde data geeft je eigen model antwoorden
-die nog niet lopen. Dat is geen bug en het is niet op te lossen door aan de
-instellingen te draaien — het model heeft gewoon te weinig gezien. Een bruikbaar
-model zit onder een eval-verlies van 2,0; de voorbeeldtraining komt tot nu toe niet
-lager dan ongeveer 3,0.
+die nog niet lopen. Vraag je "Wat is fotosynthese?", dan komt er zoiets uit als
+*"Een den hers st ken zijn, k detst pe ven jer brdeelden"* — losse lettergrepen die
+wel op Nederlands lijken maar niets zeggen. Dat is geen bug en het is niet op te
+lossen door aan de instellingen te draaien; het model heeft gewoon te weinig gezien.
+Een bruikbaar model zit onder een eval-verlies van 2,0.
 
-Wel is er een duidelijke grens zichtbaar. Bij de eerste 12.000 tokens liep het
-eval-verlies op van 3,3 naar 7,8 terwijl het trainverlies naar 0,004 zakte: puur
-uit-het-hoofd leren. Bij de huidige 98.000 tokens blijven train en eval binnen een
-paar honderdsten van elkaar — het model leert dan wél iets over taal in plaats van
-alleen zijn voorbeelden. Meer data is dus niet zomaar méér van hetzelfde; het verlegt
-wat het model doet.
+De meting op de meegeleverde dataset (0,95M parameters, 92.000 trainingstokens,
+15 minuten op een gewone laptop) kwam tot een **beste eval-verlies van 2,78** op stap
+400. Dat is een stuk beter dan de 3,30 van de eerste kleine dataset, maar nog ruim
+boven de 2,0 die je nodig hebt voor lopende zinnen.
+
+Wel is er een duidelijke grens zichtbaar, en die is het interessante deel. Bij de
+eerste 12.000 tokens liep het eval-verlies op van 3,3 naar 7,8 terwijl het
+trainverlies naar 0,004 zakte: puur uit-het-hoofd leren. Bij de huidige 98.000 tokens
+lagen train en eval rond het optimum binnen een paar honderdsten van elkaar (2,70
+tegen 2,78) — het model leerde toen wél iets over taal in plaats van alleen zijn
+voorbeelden.
+
+Train je daarna door, dan verschuift dat alsnog: op stap 1200 stond het trainverlies
+op 1,97 maar het eval-verlies op 3,34. De kloof komt dus terug zodra je te lang op
+te weinig data doorgaat. Daarom bewaart `train` het beste moment apart en stopt hij
+vanzelf — zie [Waarom trainen vanzelf stopt](#waarom-trainen-vanzelf-stopt). Meer
+data is niet zomaar méér van hetzelfde; het verlegt wat het model doet.
 
 Wat wél meteen werkt, en waar dit voor bedoeld is:
 
@@ -120,12 +132,16 @@ python -m webai info --run webai
 
 ```
 Model 'webai'
-  parameters   0.68M
-  vorm         2 lagen × 128 breed, context 512, woordenschat 1652
-  getraind     stap 250, 0.68M tokens gezien
-  verlies      0.7617  (trainen)
-               3.3012  (evalueren — dit is het cijfer dat telt)
+  parameters   0.95M
+  vorm         2 lagen × 128 breed, context 512, woordenschat 3818
+  getraind     stap 1200, 2.62M tokens gezien
+  verlies      1.9686  (trainen)
+               2.7828  (evalueren — dit is het cijfer dat telt)
 ```
+
+*(De echte uitvoer van een trainingsronde op de meegeleverde dataset. Het
+trainverlies staat lager dan het eval-verlies — precies de kloof waar de volgende
+alinea over gaat.)*
 
 Twee verliezen, en het verschil daartussen is het belangrijkste getal dat je
 krijgt:
@@ -137,6 +153,28 @@ Loopt het trainverlies richting 0 en blijft het eval-verlies hoog, dan is het mo
 aan het **overfitten**: het leert de voorbeelden uit zijn hoofd in plaats van taal.
 `info` waarschuwt daar zelf voor. De oplossing is nooit "minder lang trainen" maar
 **meer data**.
+
+### Waarom trainen vanzelf stopt
+
+Omdat overfitten bij een kleine dataset bijna onvermijdelijk is, houdt `train` het
+eval-verlies in de gaten en **stopt vanzelf** zodra het vier evaluaties op rij niet
+meer verbetert. Het beste moment wordt apart bewaard als `best.npz`, dus ook als je
+te lang doorgaat levert de server daarna nog steeds dát model op (`--checkpoint auto`).
+
+Die bewaking staat automatisch aan zodra je **weinig voorbeelden** hebt (minder dan
+300) of **veel ronden** over dezelfde data maakt (meer dan 25). Die tweede regel is
+niet zomaar gekozen. Op de meegeleverde dataset — 484 trainingsvoorbeelden, 16 per
+batch, 2500 stappen gepland — lag het optimum op stap 400, met een eval-verlies van
+**2,7828**. Een eerdere versie keek alleen naar het aantal voorbeelden, vond 484
+"genoeg" en trainde 450 stappen door: het eval-verlies liep op naar 3,04 terwijl het
+trainverlies bleef dalen naar 2,36. In stappen van 31 betekent 2500 stappen namelijk
+±83 ronden over dezelfde data, en dat is ruim over de grens.
+
+Wil je het zelf in de hand hebben: `--patience 6` stelt het aantal evaluaties in, en
+`--no-early-stop` zet de bewaking helemaal uit. Een expliciete keuze wint altijd van
+de automatische regel. Zet je hem uit, dan traint hij net zo lang je vroeg — maar het
+beste moment wordt nog steeds bewaard als `best.npz`, dus je verliest het niet.
+
 
 ---
 
@@ -335,8 +373,14 @@ Vaak gebruikte opties bij `train`:
 | `--context` | Maximale contextlengte in tokens |
 | `--grad-accum` | Gradiënten over dit aantal stapjes optellen: kleiner `--batch` bij geheugentekort, zonder de effectieve batch te veranderen |
 | `--eval-every` | Om de zoveel stappen evalueren op onbekende voorbeelden |
+| `--patience` | Stop zodra het eval-verlies dit aantal evaluaties op rij niet meer verbetert |
+| `--no-early-stop` | Train de opgegeven stappen af zonder bewaking; `best.npz` wordt nog steeds bewaard |
 | `--resume` | Verder waar je gebleven was |
 | `--init-from` | Starten vanaf een ander model (bijv. verder op nieuwe data) |
+
+Laat je `--patience` weg, dan beslist `train` zelf: de bewaking gaat aan bij minder
+dan 300 voorbeelden of bij meer dan 25 ronden over dezelfde data. Zie
+[Waarom trainen vanzelf stopt](#waarom-trainen-vanzelf-stopt).
 
 Bij `serve`:
 
@@ -434,19 +478,19 @@ python tests/run_all.py chat server      # alleen die twee
 ```
 Python 3.11.2 — 8 suites
 
-  ✓ gradcheck     6 tests (0.3s)
+  ✓ gradcheck     6 tests (0.4s)
   ✓ tokenizer    10 tests (0.1s)
   ✓ chat         22 tests (0.0s)
-  ✓ dataset      28 tests (0.2s)
-  ✓ seeddata     24 tests (1.5s)
-  ✓ training     18 tests (4.0s)
-  ✓ server       21 tests (0.8s)
+  ✓ dataset      28 tests (0.1s)
+  ✓ seeddata     24 tests (1.2s)
+  ✓ training     30 tests (3.6s)
+  ✓ server       22 tests (0.7s)
   ✓ feedback     36 tests (0.2s)
 
 Alles groen.
 ```
 
-**165 tests.** De servertest start een echte HTTP-server op een vrije poort en doet
+**178 tests.** De servertest start een echte HTTP-server op een vrije poort en doet
 echte verzoeken, zodat de vorm van de antwoorden gecontroleerd wordt tegen wat de
 extensie verwacht — inclusief streaming en gereedschapsaanroepen.
 

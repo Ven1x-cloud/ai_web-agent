@@ -161,6 +161,26 @@ class TestServer(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(data["loaded"])
 
+    def test_info_stays_valid_json_with_a_nan_loss(self):
+        """Een NaN-verlies mag het antwoord geen ongeldige JSON maken.
+
+        Python schrijft NaN gewoon weg, maar JSON.parse in de browser weigert
+        het — en dan strandt de hele instellingenpagina op één getal.
+        """
+        original = self.fx.host.info
+        self.fx.host.info = lambda: dict(original(), loss=float("nan"),
+                                         eval_loss=float("inf"))
+        try:
+            with urllib.request.urlopen(self.fx.base + "/v1/info", timeout=20) as res:
+                raw = res.read().decode("utf-8")
+        finally:
+            self.fx.host.info = original
+        self.assertNotIn("NaN", raw)
+        self.assertNotIn("Infinity", raw)
+        data = json.loads(raw)  # zou anders gooien
+        self.assertIsNone(data["loss"])
+        self.assertIsNone(data["eval_loss"])
+
     def test_cors_headers(self):
         """Zonder CORS kan een extensie (chrome-extension://…) de server niet bereiken."""
         req = urllib.request.Request(self.fx.base + "/health", method="GET")

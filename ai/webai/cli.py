@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -72,6 +73,13 @@ def _add_train_args(ap: argparse.ArgumentParser) -> None:
                          "de effectieve batch verandert")
     ap.add_argument("--eval-every", type=int, default=None, dest="eval_every",
                     help="om de zoveel stappen evalueren op onbekende voorbeelden")
+    ap.add_argument("--patience", type=int, default=None, dest="early_stop_patience",
+                    help="stop zodra het eval-verlies dit aantal evaluaties op rij niet "
+                         "meer verbetert. Laat je dit weg, dan beslist train zelf op "
+                         "grond van hoeveel data en ronden je hebt")
+    ap.add_argument("--no-early-stop", action="store_true", dest="no_early_stop",
+                    help="train de opgegeven stappen af zonder bewaking op overfitten; "
+                         "het beste moment wordt nog steeds apart bewaard als best.npz")
     ap.add_argument("--resume", action="store_true", help="verder gaan waar je bleef")
     ap.add_argument("--init-from", default=None,
                     help="start vanaf een andere run (verder trainen op nieuwe data)")
@@ -109,6 +117,12 @@ def cmd_train(args: argparse.Namespace) -> int:
         train_cfg.grad_accum = max(1, args.grad_accum)
     if args.eval_every is not None:
         train_cfg.eval_every = max(1, args.eval_every)
+    if getattr(args, "no_early_stop", False):
+        # -1 is het enige teken dat "bewust uit" onderscheidt van "niet opgegeven"
+        # (0), want 0 laat train zelf beslissen.
+        train_cfg.early_stop_patience = -1
+    elif args.early_stop_patience is not None:
+        train_cfg.early_stop_patience = max(1, args.early_stop_patience)
     if args.vocab is not None:
         model_cfg.vocab_size = args.vocab
     tok_cfg = TokenizerConfig(vocab_size=model_cfg.vocab_size)
@@ -268,9 +282,12 @@ def _fmt_num(value, digits: int = 4, fallback: str = "-") -> str:
     if value is None:
         return fallback
     try:
-        return f"{float(value):.{digits}f}"
+        number = float(value)
     except (TypeError, ValueError):
         return fallback
+    if not math.isfinite(number):
+        return fallback   # "nan" of "inf" zegt de lezer niets
+    return f"{number:.{digits}f}"
 
 
 def cmd_info(args: argparse.Namespace) -> int:

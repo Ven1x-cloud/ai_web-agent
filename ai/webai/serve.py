@@ -35,7 +35,7 @@ import numpy as np
 
 from . import train as trainer
 from .chat import EOT, TOOL, TOOL_CALL, TURN, parse_assistant_output, render_prompt
-from .config import GenConfig, RUNS_DIR, load_json
+from .config import GenConfig, RUNS_DIR, json_safe, load_json
 from .feedback import FeedbackStore
 from .generate import Generator, sampling_params
 from .model import TransformerLM
@@ -411,7 +411,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Max-Age", "86400")
 
     def _json(self, obj: Any, status: int = 200) -> None:
-        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        # json_safe: een NaN-verlies mag het antwoord geen ongeldige JSON maken,
+        # want JSON.parse in de browser gooit dat compleet weg.
+        body = json.dumps(json_safe(obj), ensure_ascii=False,
+                          allow_nan=False).encode("utf-8")
         self.send_response(status)
         self._cors()
         self.send_header("Content-Type", "application/json; charset=utf-8")
