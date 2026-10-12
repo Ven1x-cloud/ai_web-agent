@@ -1,6 +1,9 @@
 {
   "name": "ai-web-agent",
   "version": "0.1.0",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
   "private": true,
   "type": "module",
   "description": "AI-agent browserextensie: leest websites, bekijkt afbeeldingen, zoekt op internet en helpt met school (NL/EN/FR/DE, wiskunde, scheikunde, aardrijkskunde...). Werkt via OpenRouter (ook met gratis modellen).",

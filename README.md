@@ -225,6 +225,12 @@ weglaten zonder de extensie aan te raken — en andersom.
 - Afbeeldingen die een tool oplevert (screenshot, `view_image`) gaan als `image_url` terug naar het model.
 - Oude beurten worden compact gemaakt (geen oude paginatekst/afbeeldingen) om tokens en gratis verzoeken te sparen.
 
+**Node 22 of nieuwer is vereist** voor de tests van de extensie. Dat ligt niet aan
+onze code maar aan de testafhankelijkheden: `jsdom` 30 eist `^22.22.2 || ^24.15.0 ||
+>=26.0.0`, en `undici` 8 eist `>=22.19`. Op Node 20 faalt de suite dus al bij het
+laden van jsdom. De eis staat in `engines` in `package.json`, en CI test alleen
+Node 22 en 24. Voor de Python-kant van `ai/` geldt: 3.11 of nieuwer, met NumPy.
+
 ```bash
 npm install          # dev-dependencies (eslint, jsdom, libs voor vendor)
 npm run vendor       # vendor-bestanden verversen na een update van marked/dompurify/katex
