@@ -17,7 +17,7 @@ ai/
 │   ├── seed/       voorbeelden die meekomen in de broncode
 │   └── learned/    wat jíj toevoegt of laat maken (staat niet in Git)
 ├── runs/           getrainde modellen (staat niet in Git)
-└── tests/          141 tests die alles controleren
+└── tests/          165 tests die alles controleren
 ```
 
 ---
@@ -28,23 +28,31 @@ Dit is een **echt, werkend, zelfgetraind model** — en tegelijk is het klein. D
 twee dingen tegelijk waar zijn, is belangrijk om te begrijpen voordat je er tijd
 insteekt.
 
-Wat er nu meegeleverd wordt: **32 kB voorbeelddata** (±12.000 tokens) en een model
-van **0,68 miljoen parameters**. Ter vergelijking: de gratis cloudmodellen waar de
+Wat er nu meegeleverd wordt: **145 kB voorbeelddata** (510 vraag-antwoordparen over
+negen onderwerpen, ±98.000 tokens) en een model van **0,95 miljoen parameters**. Ter vergelijking: de gratis cloudmodellen waar de
 extensie standaard mee werkt hebben miljarden parameters en zijn getraind op
 biljoenen tokens. Het verschil is een factor miljoen of meer.
 
 | Trainingsdata | Wat je dan krijgt |
 | --- | --- |
-| ±12.000 tokens *(nu)* | Het model kent de voorbeelden uit zijn hoofd. Buiten die voorbeelden komt er **onsamenhangende tekst** uit. Leert wel dat de hele keten werkt. |
+| ±12.000 tokens | Het model kent de voorbeelden uit zijn hoofd. Buiten die voorbeelden komt er **onsamenhangende tekst** uit. |
+| ±98.000 tokens *(nu)* | Het model overfit niet meer: train- en eval-verlies liggen vlak bij elkaar. Het begint patronen te pakken, maar vloeiende zinnen komen er nog niet uit. |
 | ±1 miljoen tokens | Echte zinnen, redelijke Nederlandse grammatica. Nog geen betrouwbare feitenkennis. |
 | ±50 miljoen tokens | Leesbaar Nederlands over bekende onderwerpen. Fouten blijven vaak zelfverzekerd. |
 | ±1 miljard tokens | Pas dan wordt het een bruikbare gesprekspartner voor eenvoudige vragen. |
 
 **Concreet betekent dat:** met de meegeleverde data geeft je eigen model antwoorden
-die op woordensoep lijken. Dat is geen bug en dat is ook niet op te lossen door aan
-de instellingen te draaien — het model heeft gewoon te weinig gezien. De
-`best.npz`-checkpoint van de voorbeeldtraining haalt een eval-verlies van 3,30; een
-bruikbaar model zit onder de 2,0.
+die nog niet lopen. Dat is geen bug en het is niet op te lossen door aan de
+instellingen te draaien — het model heeft gewoon te weinig gezien. Een bruikbaar
+model zit onder een eval-verlies van 2,0; de voorbeeldtraining komt tot nu toe niet
+lager dan ongeveer 3,0.
+
+Wel is er een duidelijke grens zichtbaar. Bij de eerste 12.000 tokens liep het
+eval-verlies op van 3,3 naar 7,8 terwijl het trainverlies naar 0,004 zakte: puur
+uit-het-hoofd leren. Bij de huidige 98.000 tokens blijven train en eval binnen een
+paar honderdsten van elkaar — het model leert dan wél iets over taal in plaats van
+alleen zijn voorbeelden. Meer data is dus niet zomaar méér van hetzelfde; het verlegt
+wat het model doet.
 
 Wat wél meteen werkt, en waar dit voor bedoeld is:
 
@@ -230,15 +238,23 @@ python -m webai data
 ```
 
 ```
-3 databestanden, 32.3 kB totaal
+9 databestanden, 145.1 kB totaal
 
+      30.5 kB  data/seed/09_maatschappij_nl.jsonl
+      23.2 kB  data/seed/07_natuurwetenschappen_nl.jsonl
+      20.5 kB  data/seed/06_taal_nl.jsonl
       15.8 kB  data/seed/02_school_nl.jsonl
-       8.9 kB  data/seed/03_tools_nl.jsonl
-       7.6 kB  data/seed/01_basis_nl.jsonl
+      14.6 kB  data/seed/05_rekenen_nl.jsonl
+      ...
 
-Met de tokenizer van 'webai': 48 samples, 11906 tokens
-  gesprekken: 48   tekstblokken: 0   overgeslagen: 0
+Met de tokenizer van 'webai': 510 samples, 86918 tokens
+  gesprekken: 510   tekstblokken: 0   overgeslagen: 0
 ```
+
+De negen meegeleverde bestanden behandelen: wie de agent is, schoolvakken algemeen,
+gereedschapsgebruik, feitenkennis (hoofdsteden, Nederland, wereld), rekenen en
+wiskunde, Nederlands en grammatica, natuurkunde/scheikunde/biologie, Engels, en
+maatschappij (economie, informatica, privacy, klimaat).
 
 **Alleen het antwoord telt mee voor het verlies.** De vraag, de systeemprompt en
 de resultaten van gereedschap staan wel in de context (het model leest ze), maar
@@ -416,22 +432,28 @@ python tests/run_all.py chat server      # alleen die twee
 ```
 
 ```
-Python 3.11.2 — 7 suites
+Python 3.11.2 — 8 suites
 
   ✓ gradcheck     6 tests (0.3s)
   ✓ tokenizer    10 tests (0.1s)
   ✓ chat         22 tests (0.0s)
-  ✓ dataset      28 tests (0.1s)
-  ✓ training     18 tests (3.2s)
-  ✓ server       21 tests (0.7s)
-  ✓ feedback     36 tests (0.1s)
+  ✓ dataset      28 tests (0.2s)
+  ✓ seeddata     24 tests (1.5s)
+  ✓ training     18 tests (4.0s)
+  ✓ server       21 tests (0.8s)
+  ✓ feedback     36 tests (0.2s)
 
 Alles groen.
 ```
 
-**141 tests.** De servertest start een echte HTTP-server op een vrije poort en doet
+**165 tests.** De servertest start een echte HTTP-server op een vrije poort en doet
 echte verzoeken, zodat de vorm van de antwoorden gecontroleerd wordt tegen wat de
 extensie verwacht — inclusief streaming en gereedschapsaanroepen.
+
+`test_seed_data.py` controleert niet de code maar **de meegeleverde data zelf**: elke
+regel geldige JSON, elk gesprek eindigt op een antwoord, geen lege of dubbele vragen,
+en de hele set verwerkt zonder overslagen records. Die test heeft meteen drie dubbele
+vragen gevonden in de handgeschreven bestanden.
 
 De tests van de extensie zelf (20 stuks) draai je met `npm test` vanuit de
 hoofdmap; die controleren ook dat de extensie correct omschakelt naar je eigen

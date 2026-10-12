@@ -13,7 +13,7 @@ Een browserextensie (Chrome / Edge / Brave) die als **AI-agent naast elke websit
 
 Het "brein" is uitwisselbaar. Standaard is dat **je eigen, zelf getrainde AI** die in de map [`ai/`](ai/) staat en volledig op je eigen pc draait. Liever meteen een slim model? Met één druk op de knop schakel je over op OpenRouter (gratis, 50 vragen per dag) of op een lokaal model via Ollama. De agent zelf – ogen, handen, zoeken, geheugen – zit in deze extensie en werkt met alle drie precies hetzelfde.
 
-> **Eerlijk over je eigen AI:** het model dat hier meegeleverd wordt is écht en zelf getraind, maar klein (0,68 miljoen parameters, 32 kB voorbeelddata). Cloudmodellen zijn miljoenen keren groter. Daarmee geeft het nu **onsamenhangende antwoorden** – dat is geen storing maar gebrek aan data, en het is de reden waarom je het kunt blijven trainen. Het is privé, offline en zonder daglimiet, en het wordt beter naarmate jij het gebruikt. Voor huiswerk is het cloudmodel voorlopig verstandiger. Zie [ai/README.md](ai/README.md) voor de volledige uitleg en hoe je het laat groeien.
+> **Eerlijk over je eigen AI:** het model dat hier meegeleverd wordt is écht en zelf getraind, maar klein (0,95 miljoen parameters, 145 kB voorbeelddata met 510 vraag-antwoordparen). Cloudmodellen zijn miljoenen keren groter. Daarmee geeft het nu **nog geen lopende antwoorden** – dat is geen storing maar gebrek aan data, en het is de reden waarom je het kunt blijven trainen. Het is privé, offline en zonder daglimiet, en het wordt beter naarmate jij het gebruikt. Voor huiswerk is het cloudmodel voorlopig verstandiger. Zie [ai/README.md](ai/README.md) voor de volledige uitleg en hoe je het laat groeien.
 
 ---
 
@@ -150,7 +150,8 @@ Of zet eigen tekst (`.txt`, `.md`, `.jsonl`) in `ai/data/learned/`.
 
 | Trainingsdata | Wat je dan krijgt |
 | --- | --- |
-| ±12.000 tokens *(nu)* | Kent de voorbeelden uit zijn hoofd; daarbuiten **woordensoep** |
+| ±12.000 tokens | Kent de voorbeelden uit zijn hoofd; daarbuiten **woordensoep** |
+| ±98.000 tokens *(nu)* | Overfit niet meer en pakt patronen, maar nog geen vloeiende zinnen |
 | ±1 miljoen tokens | Echte zinnen, redelijke grammatica, geen betrouwbare feiten |
 | ±50 miljoen tokens | Leesbaar Nederlands over bekende onderwerpen |
 
@@ -192,7 +193,7 @@ ai/                      ← JE EIGEN AI, los van de extensie (Python, alleen Nu
   data/seed/             meegeleverde voorbeelden (.jsonl)
   data/learned/          wat jij toevoegt of laat maken (niet in Git)
   runs/                  getrainde modellen (niet in Git)
-  tests/                 141 tests, incl. gradcheck en een echte HTTP-server
+  tests/                 165 tests: gradcheck, echte HTTP-server, en de seeddata zelf
 extension/
   manifest.json          Manifest V3 (zijpaneel, contextmenu's, scripting, <all_urls>)
   background.js          Service worker: paneel openen, contextmenu's
@@ -222,7 +223,7 @@ npm install          # dev-dependencies (eslint, jsdom, libs voor vendor)
 npm run vendor       # vendor-bestanden verversen na een update van marked/dompurify/katex
 npm run check        # manifest + verwijzingen + eslint
 npm test             # e2e-tests (jsdom + nep-OpenRouter), 20 tests
-npm run test:ai      # tests van het eigen AI-model (Python), 141 tests
+npm run test:ai      # tests van het eigen AI-model (Python), 165 tests
 npm run test:all     # beide suites achter elkaar
 npm run package      # release/ai-web-agent.zip bouwen (voor winkels of een GitHub-release)
 python3 scripts/make-icons.py   # iconen opnieuw genereren (Pillow)

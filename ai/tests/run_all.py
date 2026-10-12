@@ -24,6 +24,7 @@ SUITES = [
     ("tokenizer", "test_tokenizer.py", "byte-level BPE: coderen, ontcoderen, bewaren"),
     ("chat", "test_chat.py", "chatsjabloon en het teruglezen van tool-aanroepen"),
     ("dataset", "test_dataset.py", "datasetbouw en welke tokens meegeteld worden"),
+    ("seeddata", "test_seed_data.py", "de meegeleverde trainingsdata zelf"),
     ("training", "test_training.py", "trainingslus: verlies, checkpoints, hervatten"),
     ("server", "test_server.py", "OpenAI-compatibele HTTP-server, echte verzoeken"),
     ("feedback", "test_feedback.py", "feedback bewaren en omzetten naar trainingsdata"),
