@@ -1,0 +1,78 @@
+# Draait alle tests bij elke push op main en bij elke pull request.
+#
+# `release.yml` bouwde al dezelfde controles, maar die draaide alleen op een tag
+# (v*) of handmatig — dus op een PR gebeurde er niets en zag je een fout pas bij
+# het publiceren. Deze workflow sluit dat gat.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Een nieuwe push op dezelfde PR maakt de nog lopende controle overbodig.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests (Node ${{ matrix.node-version }} / Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Node 22 is wat de release gebruikt; 20 is de oudste nog ondersteunde LTS.
+        node-version: ["20", "22"]
+        python-version: ["3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Afhankelijkheden
+        run: npm ci
+
+      # NumPy is de enige echte afhankelijkheid van het eigen AI-model; de
+      # backprop is met de hand geschreven, dus er is geen PyTorch nodig.
+      - name: NumPy voor de tests van het eigen AI-model
+        run: python -m pip install --upgrade pip && pip install -r ai/requirements.txt
+
+      # Lint van de extensie: eslint plus een paar eigen controles.
+      - name: Lint en statische controles
+        run: node scripts/check.mjs
+
+      # Tests van de extensie zelf, inclusief het omschakelen naar het eigen model.
+      - name: Tests (extensie)
+        run: node test/e2e.mjs
+
+      # Het eigen AI-model in ai/ is een los onderdeel, dus het krijgt eigen tests:
+      # gradcheck van de handgeschreven backprop, tokenizer, dataset, de
+      # meegeleverde seeddata, trainingslus, feedback en een echte HTTP-server op
+      # een vrije poort.
+      - name: Tests (eigen AI-model)
+        run: node scripts/test-ai.mjs
+
+      # Het trainingscommando moet op een verse installatie werken zonder dat er
+      # al een getraind model staat. Dit is de goedkoopste rooktest: een paar
+      # stappen op de meegeleverde data.
+      - name: Rooktest: echt trainen en serveren
+        run: |
+          cd ai
+          python -m webai build --preset tiny --run ci --vocab 512 --context 128
+          python -m webai train --preset tiny --run ci --context 128 --batch 4 \
+            --steps 6 --eval-every 3
+          python -m webai info --run ci
+          python -m webai data --preset tiny
