@@ -68,7 +68,7 @@ jobs:
       # Het trainingscommando moet op een verse installatie werken zonder dat er
       # al een getraind model staat. Dit is de goedkoopste rooktest: een paar
       # stappen op de meegeleverde data.
-      - name: Rooktest: echt trainen en serveren
+      - name: "Rooktest: echt trainen en serveren"
         run: |
           cd ai
           python -m webai build --preset tiny --run ci --vocab 512 --context 128
