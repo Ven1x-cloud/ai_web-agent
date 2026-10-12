@@ -6,7 +6,8 @@ export const PAGE_CTX_END = "\n[End of page context]\n\n";
 
 const LANGUAGE_NAMES = { nl: "Dutch", en: "English", fr: "French", de: "German" };
 
-export function buildSystemPrompt(settings, ctx = {}) {
+export function buildSystemPrompt(settings, ctx = {}, opts = {}) {
+  if (opts.compact) return buildCompactSystemPrompt(settings, ctx);
   const now = new Date();
   const date = now.toLocaleDateString("nl-NL", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
   const time = now.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
@@ -85,4 +86,27 @@ export function buildUserContent({ text, page, images = [], includePage = true }
     parts.push({ type: "image_url", image_url: { url: img.dataUrl || img.url } });
   }
   return parts;
+}
+
+/**
+ * Korte systeemprompt voor een klein, zelf getraind model.
+ *
+ * Een eigen model heeft een korte context (vaak 256–512 tokens). Een lange
+ * systeemprompt plus 6000 tekens pagina vult die meteen, waardoor er geen
+ * ruimte meer is om te antwoorden. Daarom: korte, directe instructies in het
+ * Nederlands (de taal waarin het model getraind is) en geen tool-lijst.
+ */
+export function buildCompactSystemPrompt(settings, ctx = {}) {
+  const taal = { nl: "Nederlands", en: "Engels", fr: "Frans", de: "Duits" }[settings.answerLanguage] || "";
+  const niveau = settings.schoolLevel ? ` De gebruiker zit op "${settings.schoolLevel}".` : "";
+  const naam = settings.userName ? ` De gebruiker heet ${settings.userName}.` : "";
+  const bits = [
+    "Je bent AI Web Agent, een behulpzame assistent naast een website.",
+    taal ? `Antwoord altijd in het ${taal}.` : "Antwoord in de taal van de vraag.",
+    "Antwoord kort en duidelijk, in Markdown, en leg stap voor stap uit.",
+    "Verzin niets: weet je het niet, zeg dat dan.",
+    naam.trim(),
+    niveau,
+  ].filter(Boolean);
+  return bits.join(" ") + (ctx.tabTitle ? ` De open pagina is "${ctx.tabTitle}".` : "");
 }

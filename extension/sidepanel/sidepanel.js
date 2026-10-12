@@ -1,5 +1,6 @@
 // UI van het zijpaneel: chat, bijlagen, tabblad-info, geschiedenis, quota.
-import { loadSettings, saveSettings, onSettingsChanged, CURATED_MODELS, isFreeModel, providerChain, providerKey, isExhausted } from "../lib/settings.js";
+import { loadSettings, saveSettings, onSettingsChanged, CURATED_MODELS, isFreeModel, providerChain, providerKey, isExhausted, effectivePageChars, usesOwnModel, primaryProvider, OPENROUTER_BASE_URL } from "../lib/settings.js";
+import { sendFeedback, ping } from "../lib/localai.js";
 import { getKeyInfo, getCredits, formatCost, ApiError } from "../lib/openrouter.js";
 import { buildUserContent, PAGE_CTX_END } from "../lib/prompts.js";
 import { runAgent } from "./agent.js";
@@ -24,7 +25,7 @@ function h(tag, attrs = {}, ...children) {
 }
 
 const ui = {
-  messages: $("#messages"), welcome: $("#welcome"), input: $("#input"), send: $("#btn-send"), stop: $("#btn-stop"),
+  messages: $("#messages"), welcome: $("#welcome"), ownAi: $("#own-ai"), input: $("#input"), send: $("#btn-send"), stop: $("#btn-stop"),
   attach: $("#btn-attach"), shot: $("#btn-shot"), includePage: $("#include-page"), modelSelect: $("#model-select"),
   attachments: $("#attachments"), status: $("#status"), fileInput: $("#file-input"), composerBox: $("#composer-box"),
   tabTitle: $("#tab-title"), tabFavicon: $("#tab-favicon"), tabInfo: $("#tab-info"), quota: $("#quota"),
@@ -53,20 +54,96 @@ async function init() {
   windowId = win?.id ?? null;
   populateModelSelect();
   ui.includePage.checked = settings.includePage !== false;
-  if (!settings.apiKey) showSetup(true);
+  // Een lokale aanbieder (eigen AI of Ollama) heeft géén sleutel nodig; daar hoort
+  // het instelscherm dus niet te verschijnen.
+  const needsKey = !primaryProvider(settings).local;
+  if (!settings.apiKey && needsKey) showSetup(true);
   await restoreLastConversation();
   await refreshTab();
   refreshQuota();
   checkPendingRequest();
+  checkOwnAi();
   ui.input.focus();
 }
 
 onSettingsChanged((s) => {
   settings = s;
   populateModelSelect();
-  if (settings.apiKey) showSetup(false);
+  if (settings.apiKey || primaryProvider(s).local) showSetup(false);
   refreshQuota(true);
+  checkOwnAi();
 });
+
+// ---------- Eigen AI: is de server er? ----------
+/**
+ * Controleert bij het openen of de eigen AI bereikbaar is.
+ *
+ * De extensie staat standaard op het eigen model, maar die server draait niet
+ * vanzelf. Zonder deze controle typt iemand een vraag en krijgt pas dán een
+ * foutmelding. Nu zie je meteen wat er aan de hand is, mét een uitweg.
+ */
+async function checkOwnAi() {
+  const box = ui.ownAi;
+  if (!box) return;
+  if (!usesOwnModel(settings)) { box.hidden = true; box.replaceChildren(); return; }
+  box.hidden = false;
+  box.replaceChildren(h("div", { class: "own-ai-probe", text: "Eigen AI controleren…" }));
+  let state;
+  try {
+    state = await ping(settings.baseUrl.replace(/\/v1\/?$/, ""));
+  } catch (_) {
+    state = { ok: false };
+  }
+  if (!box.isConnected) return; // paneel ondertussen opnieuw opgebouwd
+  box.replaceChildren();
+  if (state?.ok) {
+    const info = state.info || {};
+    const params = info.params ? `${(info.params / 1e6).toFixed(2)}M parameters` : "";
+    const step = info.step ? `stap ${info.step}` : "";
+    const bits = [params, step].filter(Boolean).join(" · ");
+    box.append(h("div", { class: "own-ai-ok", text: `🧠 Je eigen AI draait${bits ? ` (${bits})` : ""}.` }));
+    if (info.eval_loss && info.loss && info.eval_loss > info.loss * 1.6) {
+      box.append(h("div", {
+        class: "own-ai-note",
+        text: "Dit model heeft nog weinig geleerd en geeft waarschijnlijk onsamenhangende "
+          + "antwoorden. Meer trainingsdata helpt — zie ai/README.md.",
+      }));
+    }
+    box.hidden = false;
+    return;
+  }
+  box.hidden = false;
+  box.append(
+    h("div", { class: "own-ai-warn" },
+      h("strong", { text: "De eigen AI-server draait niet." }),
+      h("p", { text: "Start hem in een terminal en laat dat venster open staan:" }),
+      h("pre", { text: "cd ai\npython -m webai serve" }),
+      h("div", { class: "own-ai-actions" },
+        h("button", {
+          class: "chip",
+          text: "🌐 Liever OpenRouter gebruiken",
+          title: "Schakelt over naar de gratis cloudmodellen (hiervoor is een sleutel nodig)",
+          onclick: async () => {
+            // Niet alleen het adres: ook een echt cloudmodel en reserves,
+            // anders blijft de modelkeuze leeg en doet de volgende vraag niets.
+            await saveSettings({
+              baseUrl: OPENROUTER_BASE_URL,
+              model: CURATED_MODELS[0].id,
+              fallbackModels: CURATED_MODELS.filter((m) => m.free).map((m) => m.id).join(", "),
+            });
+            settings = await loadSettings();
+            populateModelSelect();
+            checkOwnAi();
+            showSetup(!settings.apiKey);
+          },
+        }),
+        h("button", {
+          class: "chip",
+          text: "⚙️ Instellingen",
+          onclick: () => chrome.runtime.openOptionsPage(),
+        })),
+  ));
+}
 
 // ---------- Setup-scherm ----------
 function showSetup(show) {
@@ -259,7 +336,7 @@ async function send() {
   if (currentTab && !page.isRestrictedUrl(currentTab.url)) {
     try {
       pageInfo = wantPage
-        ? await page.pageInfoWithFrames(currentTab.id, { maxChars: Number(settings.pageChars) || 6000 })
+        ? await page.pageInfoWithFrames(currentTab.id, { maxChars: effectivePageChars(settings) })
         : await page.pageAction(currentTab.id, "page_info", { maxChars: 0 });
     } catch (e) {
       pageNotice = "Pagina kon niet gelezen worden: " + (e.message || e);
@@ -421,6 +498,93 @@ function extractQuestion(content) {
   return i >= 0 ? t.slice(i + PAGE_CTX_END.length) : t;
 }
 
+// ---------- Feedback: hiermee leert je eigen AI ----------
+
+/**
+ * Korte, kale versie van het gesprek tot en met de laatste vraag.
+ * Pagina-snapshots en afbeeldingen gaan eruit: die zijn ruis bij het trainen.
+ */
+function plainHistory() {
+  const msgs = conversation.messages || [];
+  let lastUser = -1;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === "user" && !msgs[i]._toolImage) { lastUser = i; break; }
+  }
+  if (lastUser < 0) return null;
+  const out = [];
+  for (let i = 0; i <= lastUser; i++) {
+    const m = msgs[i];
+    if (!m || m._toolImage) continue;
+    let text = "";
+    if (m.role === "user") text = m._meta?.question ?? extractQuestion(m.content);
+    else if (m.role === "tool") {
+      const raw = typeof m.content === "string" ? m.content : "";
+      text = `${m.name || "tool"} -> ${raw.slice(0, 800)}`;
+    } else text = typeof m.content === "string" ? m.content : extractQuestion(m.content);
+    text = String(text || "").trim();
+    if (!text) continue;
+    out.push({ role: m.role, content: text.slice(0, 4000) });
+  }
+  return out.length ? out : null;
+}
+
+/**
+ * Knoppen 👍 👎 ✏️ onder een antwoord — alleen bij je eigen, lokale model.
+ * De feedback gaat naar ai/data/feedback.jsonl en wordt bij de volgende
+ * training omgezet in voorbeelden.
+ */
+function feedbackControls(content) {
+  if (!usesOwnModel(settings) || !settings.sendFeedback) return null;
+  if (!content || !content.trim()) return null;
+
+  const box = h("div", { class: "feedback" });
+  let done = false;
+  const mark = (text) => { done = true; box.replaceChildren(h("span", { class: "fb-done", text })); };
+
+  const send = async (kind, correction = "") => {
+    if (done) return;
+    const messages = plainHistory();
+    if (!messages) return mark("Kon het gesprek niet vinden.");
+    setStatus("Feedback bewaren…", true);
+    try {
+      await sendFeedback({ kind, messages, response: content, correction, model: settings.model }, settings.baseUrl);
+      mark(kind === "thumbs_up"
+        ? "👍 Bewaard. Bij de volgende training leert je AI hiervan."
+        : kind === "correction"
+          ? "✏️ Jouw verbetering is bewaard als voorbeeld — het sterkste leersignaal."
+          : "👎 Bewaard. Zet er bij ✏️ jouw verbetering naast, dan leert je AI er echt van.");
+      setStatus("");
+    } catch (e) {
+      setStatus("");
+      mark("Feedback niet bewaard: " + (e.message || e).split("\n")[0]);
+    }
+  };
+
+  const up = h("button", { class: "fb", text: "👍", title: "Goed antwoord — als voorbeeld bewaren", onclick: () => send("thumbs_up") });
+  const down = h("button", { class: "fb", text: "👎", title: "Niet goed", onclick: () => send("thumbs_down") });
+
+  const editor = h("div", { class: "fb-edit", hidden: true });
+  const area = h("textarea", { placeholder: "Schrijf hier hoe het antwoord wél had moeten zijn…", rows: 3 });
+  const save = h("button", { text: "Bewaar als voorbeeld", onclick: async () => {
+    const correction = area.value.trim();
+    if (!correction) { setStatus("Schrijf eerst jouw verbetering."); return; }
+    await send("correction", correction);
+  } });
+  const cancel = h("button", { class: "ghost", text: "Annuleer", onclick: () => { editor.hidden = true; } });
+  editor.append(area, h("div", { class: "fb-actions" }, save, cancel));
+
+  const edit = h("button", { class: "fb", text: "✏️", title: "Verbeter het antwoord — je AI leert hiervan", onclick: () => {
+    editor.hidden = !editor.hidden;
+    if (!editor.hidden) area.focus();
+  } });
+
+  box.append(
+    h("span", { class: "fb-label", text: "Eigen AI laten leren:" }),
+    up, down, edit, editor,
+  );
+  return box;
+}
+
 /** Maakt de weergave voor één assistant-beurt (tekst, stappen, meta). */
 function createTurnView() {
   const wrap = h("div", { class: "msg assistant" });
@@ -489,6 +653,8 @@ function createTurnView() {
         h("button", { text: "Kopieer", onclick: () => navigator.clipboard.writeText(content || "").then(() => setStatus("Gekopieerd.")) }),
       );
       wrap.append(meta);
+      const fb = feedbackControls(content);
+      if (fb) wrap.append(fb);
       scrollToBottom();
     },
     note(text) {
@@ -499,7 +665,11 @@ function createTurnView() {
       flush();
       const box = h("div", { class: "error" }, h("div", { text: message }));
       const actions = h("div", { class: "error-actions" });
-      if (err instanceof ApiError && err.status === 401) actions.append(h("button", { text: "Instellingen", onclick: () => chrome.runtime.openOptionsPage() }));
+      // Bij 401 (verkeerde sleutel) én bij een onbereikbare server is de
+      // oplossing een instelling; zonder knop loopt de gebruiker dood.
+      if (err instanceof ApiError && (err.status === 401 || err.kind === "unreachable")) {
+        actions.append(h("button", { text: "Instellingen", onclick: () => chrome.runtime.openOptionsPage() }));
+      }
       if (retry) actions.append(h("button", { text: "Opnieuw", onclick: () => (onRetry ? onRetry() : send()) }));
       for (const alt of alternatives) {
         actions.append(h("button", { text: `Probeer met ${alt.label}`, title: alt.id, onclick: () => onSwitch?.(alt.id) }));

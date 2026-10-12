@@ -4,3 +4,24 @@ node_modules/
 test/output/
 .DS_Store
 release/
+
+# Python (het eigen AI-model in ai/)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Getrainde modellen: dit zijn bouwresultaten, geen broncode.
+# Ze zijn groot (tientallen MB tot GB) en machine-afhankelijk.
+ai/runs/
+
+# Door de gebruiker verzamelde trainingsdata en feedback.
+# Hoort bij de machine van de gebruiker, niet bij de broncode.
+ai/data/learned/
+ai/data/feedback.jsonl
+
+# Geheime sleutels: nooit in Git
+.env
+*.key

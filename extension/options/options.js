@@ -1,12 +1,14 @@
-import { loadSettings, saveSettings, CURATED_MODELS, DEFAULTS, isFreeModel, PROVIDER_PRESETS } from "../lib/settings.js";
+import { loadSettings, saveSettings, CURATED_MODELS, DEFAULTS, isFreeModel, PROVIDER_PRESETS, usesOwnModel } from "../lib/settings.js";
 import { getKeyInfo, getCredits, listModels } from "../lib/openrouter.js";
+import { trainStatus, startTraining, describeModel, trainingAdvice, ping, LOCAL_AI_BASE } from "../lib/localai.js";
 
 const $ = (s) => document.querySelector(s);
 let settings = null;
 let loadedModels = null; // volledige lijst van de API (na klikken)
+let aiTimer = 0;
 
-const fields = ["apiKey", "baseUrl", "fallbackModels", "answerLanguage", "reasoning", "userName", "schoolLevel", "pageChars", "maxSteps"];
-const checks = ["allowActions", "includePage", "showReasoning"];
+const fields = ["apiKey", "baseUrl", "fallbackModels", "answerLanguage", "reasoning", "userName", "schoolLevel", "pageChars", "maxSteps", "localPageChars"];
+const checks = ["allowActions", "includePage", "showReasoning", "sendFeedback", "localUseTools"];
 
 function flashSaved() {
   const el = $("#saved");
@@ -125,6 +127,86 @@ function initProviders() {
   });
 }
 
+// ---------- Je eigen AI (map ai/) ----------
+
+const AI_PRESETS = [
+  { id: "tiny", label: "tiny (snel, ~0,7M params)" },
+  { id: "small", label: "small (~4M params)" },
+  { id: "medium", label: "medium (~15M params)" },
+];
+
+function aiStateText(state) {
+  switch (state) {
+    case "training": return "Bezig met trainen…";
+    case "starting": return "Training starten…";
+    case "done": return "Training klaar ✓";
+    case "error": return "Training mislukt";
+    default: return "";
+  }
+}
+
+async function refreshAi() {
+  const stateEl = $("#aiState"), statusEl = $("#aiStatus"), modelEl = $("#aiModel"), adviceEl = $("#aiAdvice");
+  const base = usesOwnModel(settings) ? settings.baseUrl : LOCAL_AI_BASE;
+  $("#aiPlayground").href = String(base).replace(/\/v1\/?$/, "/");
+  try {
+    const { info } = await ping(base);
+    stateEl.textContent = info?.loaded ? "Eigen AI draait ✓" : "Eigen AI draait, maar geen model geladen";
+    statusEl.className = "status " + (info?.loaded ? "ok" : "err");
+    statusEl.textContent = info?.loaded
+      ? `Server bereikbaar op ${base}.`
+      : "Server bereikbaar, maar er is nog geen getraind model. Train er een (knop hierboven of in de terminal).";
+    modelEl.textContent = describeModel(info);
+    adviceEl.textContent = trainingAdvice(info);
+    const fb = info?.feedback;
+    if (fb?.total) {
+      modelEl.textContent += ` · ${fb.total} feedback-berichten (${fb.pending} nog niet verwerkt)`;
+    }
+    updateTrainButton(info);
+  } catch (e) {
+    stateEl.textContent = "Eigen AI niet bereikbaar";
+    statusEl.className = "status err";
+    statusEl.textContent = (e.message || String(e)).split("\n")[0];
+    modelEl.textContent = `Start de server met: cd ai && python -m webai serve`;
+    adviceEl.textContent = "";
+    updateTrainButton(null);
+  }
+}
+
+function updateTrainButton(info) {
+  const btn = $("#aiTrain");
+  const training = info?.train_status?.state === "training" || info?.train_status?.state === "starting";
+  btn.disabled = training;
+  btn.textContent = training ? "Traint… (even geduld)" : "Train verder";
+}
+
+async function pollTraining() {
+  clearTimeout(aiTimer);
+  const base = usesOwnModel(settings) ? settings.baseUrl : LOCAL_AI_BASE;
+  try {
+    const st = await trainStatus(base);
+    const statusEl = $("#aiStatus");
+    if (st.state === "training" || st.state === "starting") {
+      statusEl.className = "status";
+      statusEl.textContent = `${aiStateText(st.state)} stap ${st.step ?? "?"}${st.loss != null ? `, verlies ${Number(st.loss).toFixed(3)}` : ""}${st.tokens_per_sec ? `, ${Math.round(st.tokens_per_sec)} tok/s` : ""}`;
+      updateTrainButton({ train_status: st });
+      aiTimer = setTimeout(pollTraining, 2000);
+    } else if (st.state === "done") {
+      statusEl.className = "status ok";
+      statusEl.textContent = st.message || "Training klaar.";
+      await refreshAi();
+    } else if (st.state === "error") {
+      statusEl.className = "status err";
+      statusEl.textContent = "Training mislukt: " + (st.message || "onbekende fout");
+      updateTrainButton(null);
+    } else {
+      updateTrainButton(null);
+    }
+  } catch (_) {
+    updateTrainButton(null);
+  }
+}
+
 async function init() {
   settings = await loadSettings();
   initProviders();
@@ -141,6 +223,7 @@ async function init() {
       let v = e.target.value.trim();
       if (f === "baseUrl" && !v) v = DEFAULTS.baseUrl;
       if (f === "pageChars") v = Math.max(1000, Math.min(30000, Number(v) || DEFAULTS.pageChars));
+      if (f === "localPageChars") v = Math.max(300, Math.min(8000, Number(v) || DEFAULTS.localPageChars));
       if (f === "maxSteps") v = Math.max(1, Math.min(25, Number(v) || DEFAULTS.maxSteps));
       save({ [f]: v });
     });
@@ -203,6 +286,63 @@ async function init() {
     st.textContent = "Alle gesprekken zijn gewist.";
     st.className = "status ok";
   });
+
+  // --- eigen AI ---
+  $("#aiRefresh").addEventListener("click", refreshAi);
+  $("#aiTrain").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    const base = usesOwnModel(settings) ? settings.baseUrl : LOCAL_AI_BASE;
+    const preset = window.prompt(
+      "Hoe groot moet de training zijn?\n\n"
+      + AI_PRESETS.map((p) => `  ${p.id} – ${p.label}`).join("\n")
+      + "\n\nTyp de naam (tiny is genoeg om te proberen).",
+      "tiny",
+    );
+    if (preset == null) return;
+    const name = String(preset).trim().toLowerCase();
+    if (!AI_PRESETS.some((p) => p.id === name)) {
+      $("#aiStatus").className = "status err";
+      $("#aiStatus").textContent = `Onbekende grootte “${name}”. Kies uit: ${AI_PRESETS.map((p) => p.id).join(", ")}.`;
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "Starten…";
+    try {
+      const res = await startTraining({ preset: name, resume: true }, base);
+      if (res.started === false) throw new Error(res.reason || "Niet gestart");
+      $("#aiStatus").className = "status";
+      $("#aiStatus").textContent = `Training gestart (${name})${res.feedback_exported ? `, ${res.feedback_exported} feedback-voorbeelden toegevoegd` : ""}. De server blijft ondertussen gewoon antwoorden.`;
+      pollTraining();
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = "Train verder";
+      $("#aiStatus").className = "status err";
+      $("#aiStatus").textContent = (err.message || String(err)).split("\n")[0];
+    }
+  });
+
+  // --- snel wisselen tussen brein en cloud ---
+  const switchTo = async (presetId) => {
+    const preset = PROVIDER_PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+    await save({
+      baseUrl: preset.baseUrl,
+      model: preset.model,
+      apiKey: preset.id === "webai" ? "" : settings.apiKey,
+      fallbackModels: preset.id === "webai" ? "" : settings.fallbackModels,
+    });
+    $("#baseUrl").value = settings.baseUrl;
+    $("#apiKey").value = settings.apiKey || "";
+    $("#fallbackModels").value = settings.fallbackModels || "";
+    fillModelSelect();
+    refreshAi();
+  };
+  $("#useOwn").addEventListener("click", () => switchTo("webai"));
+  $("#useOpenRouter").addEventListener("click", () => switchTo("openrouter"));
+  $("#useOllama").addEventListener("click", () => switchTo("ollama"));
+
+  await refreshAi();
+  pollTraining();
 }
 
 init();

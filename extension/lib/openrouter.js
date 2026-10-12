@@ -19,7 +19,41 @@ export class ApiError extends Error {
   get transient() { return TRANSIENT_KINDS.has(this.kind); }
 }
 
-const TRANSIENT_KINDS = new Set(["provider_busy", "provider_down", "minute_limit"]);
+const TRANSIENT_KINDS = new Set(["provider_busy", "provider_down", "minute_limit", "unreachable"]);
+
+function isLocalUrl(baseUrl) {
+  return /^(https?:\/\/)?(localhost|127\.0\.0\.1|\[::1\])(:\d+)?/i.test(String(baseUrl || "").trim());
+}
+
+function providerLabel(baseUrl) {
+  const url = String(baseUrl || "");
+  if (/openrouter\.ai/.test(url)) return "OpenRouter";
+  if (/googleapis\.com/.test(url)) return "Google AI Studio";
+  if (/:11434/.test(url)) return "Ollama";
+  if (isLocalUrl(url)) return "Eigen AI (lokaal)";
+  return url ? "Aanbieder" : "";
+}
+
+/** Duidelijke tekst als een server helemaal niet bereikbaar is. */
+function unreachableMessage(baseUrl) {
+  const url = String(baseUrl || "").replace(/\/+$/, "");
+  if (isLocalUrl(baseUrl) && /:11434/.test(url)) {
+    return "Ollama is niet bereikbaar op " + url + ". Start Ollama en haal een model op "
+      + "(ollama pull qwen2.5vl:7b), of kies een andere aanbieder bij Instellingen.";
+  }
+  if (isLocalUrl(baseUrl)) {
+    return "De eigen AI-server is niet bereikbaar op " + url + ".\n\n"
+      + "Start hem in een terminal:\n"
+      + "    cd ai\n"
+      + "    python -m webai serve\n\n"
+      + "Heb je nog geen model getraind, doe dat dan eerst:\n"
+      + "    python -m webai build\n"
+      + "    python -m webai train --preset tiny\n\n"
+      + "Liever meteen een slim model uit de cloud? Zet bij Instellingen een reserve-aanbieder aan.";
+  }
+  return "De server " + url + " is niet bereikbaar. Controleer je internetverbinding "
+    + "en het API-adres bij Instellingen.";
+}
 
 function errorText(data) {
   const msg = String(data?.error?.message || data?.message || "");
@@ -132,12 +166,24 @@ async function readError(res, { model = "" } = {}) {
  * @returns {Promise<{content:string, reasoning:string, tool_calls:Array, finish_reason:string, usage:object|null, model:string, annotations:Array}>}
  */
 export async function streamChat({ baseUrl, apiKey, body, signal }, handlers = {}) {
-  const res = await fetch(joinUrl(baseUrl, "/chat/completions"), {
-    method: "POST",
-    headers: headers(apiKey, { Accept: "text/event-stream" }),
-    body: JSON.stringify({ ...body, stream: true }),
-    signal,
-  });
+  let res;
+  try {
+    res = await fetch(joinUrl(baseUrl, "/chat/completions"), {
+      method: "POST",
+      headers: headers(apiKey, { Accept: "text/event-stream" }),
+      body: JSON.stringify({ ...body, stream: true }),
+      signal,
+    });
+  } catch (e) {
+    if (signal?.aborted) throw new DOMException("Gestopt", "AbortError");
+    // fetch gooit een TypeError als de server niet bereikbaar is (bijv. de eigen
+    // AI-server staat uit). Dat is geen HTTP-fout, maar voelt voor de gebruiker
+    // wel zo: maak er een nette, tijdelijke fout van zodat de ketting doorschuift.
+    throw new ApiError(unreachableMessage(baseUrl), {
+      status: 0, data: { message: String(e?.message || e) }, kind: "unreachable",
+      model: body.model, provider: providerLabel(baseUrl), details: String(e?.message || e),
+    });
+  }
   if (!res.ok) throw await readError(res, { model: body.model });
   if (!res.body) throw new ApiError("Geen antwoordstroom ontvangen.", { status: 0, kind: "provider_down", model: body.model });
 

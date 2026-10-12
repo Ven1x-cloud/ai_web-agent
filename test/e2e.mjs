@@ -139,6 +139,18 @@ function installGlobals(pageCtx, script) {
 }
 
 // ============================================================
+// Node's eigen fetch, vastgelegd vóór installGlobals() hem vervangt.
+const REAL_FETCH = globalThis.fetch;
+
+// De standaardinstelling van de extensie is inmiddels het EIGEN, lokale model
+// (map ai/). Tests die over cloud-gedrag gaan, zetten de aanbieder expliciet neer.
+const OPENROUTER = "https://openrouter.ai/api/v1";
+const CLOUD = {
+  baseUrl: OPENROUTER,
+  model: "qwen/qwen3.8-27b:free",
+  fallbackModels: "qwen/qwen3.8-27b:free, google/gemma-4-31b-it:free, thinkingmachines/inkling:free",
+};
+
 await test("content-script: page_info leest hoofdtekst, tabel, formule en invoervelden; verbergt ruis", async () => {
   const p = makePage();
   const r = await p.send("page_info", { maxChars: 6000 });
@@ -241,7 +253,7 @@ await test("agent: volledige lus — pagina lezen, zoeken, typen, klikken, einda
   const { runAgent } = await import("../extension/sidepanel/agent.js");
   const { buildUserContent } = await import("../extension/lib/prompts.js");
   const { DEFAULTS } = await import("../extension/lib/settings.js");
-  const settings = { ...DEFAULTS, apiKey: "sk-test", model: "qwen/qwen3.8-27b:free" };
+  const settings = { ...DEFAULTS, ...CLOUD, apiKey: "sk-test" };
   const info = (await p.send("page_info", { maxChars: 6000 })).result;
   const userContent = buildUserContent({ text: "Bereken de schuine zijde en vul het antwoord in.", page: info, includePage: true });
   const events = [];
@@ -285,7 +297,7 @@ await test("agent: instellingen sturen tools aan (acties uit, OpenRouter-zoeken 
   installGlobals(p, (step, body) => { body0 = body0 || body; return textChunks("ok"); });
   const { runAgent } = await import("../extension/sidepanel/agent.js");
   const { DEFAULTS } = await import("../extension/lib/settings.js");
-  const settings = { ...DEFAULTS, apiKey: "k", allowActions: false, searchProvider: "openrouter", answerLanguage: "fr", reasoning: "low", fallbackModels: "" };
+  const settings = { ...DEFAULTS, ...CLOUD, apiKey: "k", allowActions: false, searchProvider: "openrouter", answerLanguage: "fr", reasoning: "low", fallbackModels: "" };
   await runAgent({ settings, history: [], userContent: [{ type: "text", text: "hoi" }], ctx: { getTabId: () => 1, setTabId() {}, windowId: 1 } });
   const names = body0.tools.map((t) => t.function?.name || t.type);
   assert.ok(names.includes("openrouter:web_search"));
@@ -302,7 +314,7 @@ await test("agent: bij 400 op extra parameters wordt zonder reasoning/models opn
   installGlobals(p, (step, body) => { bodies.push(body); return step === 1 ? { status: 400, body: { error: { code: 400, message: "reasoning not supported" } } } : textChunks("prima"); });
   const { runAgent } = await import("../extension/sidepanel/agent.js");
   const { DEFAULTS } = await import("../extension/lib/settings.js");
-  const r = await runAgent({ settings: { ...DEFAULTS, apiKey: "k", reasoning: "high" }, history: [], userContent: [{ type: "text", text: "hoi" }], ctx: { getTabId: () => 1, setTabId() {}, windowId: 1 } });
+  const r = await runAgent({ settings: { ...DEFAULTS, ...CLOUD, apiKey: "k", reasoning: "high" }, history: [], userContent: [{ type: "text", text: "hoi" }], ctx: { getTabId: () => 1, setTabId() {}, windowId: 1 } });
   assert.equal(r.content, "prima");
   assert.ok(bodies[0].reasoning && !bodies[1].reasoning);
 });
@@ -333,7 +345,9 @@ await test("agent: bij drukte (429 Provider returned error) schakelt hij over na
   const { DEFAULTS } = await import("../extension/lib/settings.js");
   const retries = [];
   const r = await runAgent({
-    settings: { ...DEFAULTS, apiKey: "k" }, history: [], userContent: [{ type: "text", text: "hoi" }],
+    // Reserve-modellen bestaan alleen bij een cloud-aanbieder; het eigen model
+    // heeft er geen, dus deze test zet OpenRouter expliciet neer.
+    settings: { ...DEFAULTS, ...CLOUD, apiKey: "k" }, history: [], userContent: [{ type: "text", text: "hoi" }],
     ctx: { getTabId: () => 1, setTabId() {}, windowId: 1 }, retryDelays: [0, 0],
     ui: { onRetry: (info) => retries.push(info) },
   });
@@ -407,7 +421,7 @@ await test("agent: reserve-aanbieder neemt het over als de daglimiet op is – g
   const { DEFAULTS, providerKey } = await import("../extension/lib/settings.js");
   const events = { provider: [], exhausted: [] };
   const providerState = {};
-  const settings = { ...DEFAULTS, apiKey: "k", searchProvider: "openrouter", providers: [GEMINI, { ...GEMINI, id: "leeg", apiKey: "" }, { ...GEMINI, id: "uit", enabled: false }] };
+  const settings = { ...DEFAULTS, ...CLOUD, apiKey: "k", searchProvider: "openrouter", providers: [GEMINI, { ...GEMINI, id: "leeg", apiKey: "" }, { ...GEMINI, id: "uit", enabled: false }] };
   const r = await runAgent({
     settings, history: [{ role: "user", content: "eerdere vraag over pythagoras" }, { role: "assistant", content: "eerder antwoord" }],
     userContent: [{ type: "text", text: "en nu de volgende opgave" }], ctx: { getTabId: () => 1, setTabId() {}, windowId: 1 }, retryDelays: [0, 0], providerState,
@@ -431,7 +445,7 @@ await test("agent: reserve-aanbieder neemt het over als de daglimiet op is – g
   assert.equal(events.exhausted.length, 1);
   assert.equal(events.exhausted[0].prov.id, "primary");
   assert.ok(events.exhausted[0].until > Date.now() + 2 * 3600e3, "resettijd uit de X-RateLimit-Reset-header");
-  assert.ok(providerState[providerKey({ baseUrl: DEFAULTS.baseUrl, apiKey: "k" })]?.until > Date.now());
+  assert.ok(providerState[providerKey({ baseUrl: OPENROUTER, apiKey: "k" })]?.until > Date.now());
   assert.equal(events.provider.length, 1);
   assert.equal(events.provider[0].reason, "daily_limit");
   assert.equal(events.provider[0].to.id, "p_g");
@@ -441,7 +455,7 @@ await test("agent: aanbieder die vandaag al op is wordt overgeslagen; zonder res
   const p = makePage();
   const { calls } = installGlobals(p, () => textChunks("direct via gemini", {}));
   const { runAgent } = await import("../extension/sidepanel/agent.js");
-  const { DEFAULTS, providerKey, providerChain, nextResetMs, isExhausted } = await import("../extension/lib/settings.js");
+  const { DEFAULTS, providerKey, providerChain, nextResetMs, isExhausted, OPENROUTER_BASE_URL } = await import("../extension/lib/settings.js");
   const settings = { ...DEFAULTS, apiKey: "k", providers: [GEMINI] };
   const providerState = { [providerKey({ baseUrl: DEFAULTS.baseUrl, apiKey: "k" })]: { until: Date.now() + 3600e3, reason: "daily_limit" } };
   const events = [];
@@ -461,7 +475,7 @@ await test("agent: aanbieder die vandaag al op is wordt overgeslagen; zonder res
   assert.deepEqual(providerChain({ ...DEFAULTS, apiKey: "k", providers: [GEMINI, { ...GEMINI, apiKey: "" }, { ...GEMINI, enabled: false }, { ...GEMINI, model: "" }] }).map((x) => x.id), ["primary", "p_g"]);
   assert.equal(providerChain({ ...DEFAULTS, apiKey: "k", providers: [{ id: "o", name: "Ollama", baseUrl: "http://localhost:11434/v1", model: "qwen2.5vl:7b", apiKey: "" }] }).length, 2, "lokale server heeft geen sleutel nodig");
   const t0 = Date.UTC(2026, 8, 21, 14, 0); // 21 sep 2026 14:00 UTC
-  assert.equal(nextResetMs(DEFAULTS.baseUrl, t0), Date.UTC(2026, 8, 22, 0, 0), "OpenRouter reset om 00:00 UTC");
+  assert.equal(nextResetMs(OPENROUTER_BASE_URL, t0), Date.UTC(2026, 8, 22, 0, 0), "OpenRouter reset om 00:00 UTC");
   assert.equal(nextResetMs(GEMINI.baseUrl, t0), Date.UTC(2026, 8, 22, 8, 0), "Google reset om middernacht Pacific");
   assert.ok(isExhausted({ x: 1, [providerKey(GEMINI)]: { until: t0 + 1 } }, GEMINI, t0) && !isExhausted({ [providerKey(GEMINI)]: { until: t0 - 1 } }, GEMINI, t0));
 });
@@ -471,11 +485,136 @@ await test("agent: tool-budget op → laatste stap dwingt een antwoord af", asyn
   const bodies = [];
   installGlobals(p, (step, body) => { bodies.push(body); return step < 3 ? toolCallChunks([{ id: "c" + step, name: "read_page", args: {} }]) : textChunks("klaar"); });
   const { runAgent } = await import("../extension/sidepanel/agent.js");
-  const { DEFAULTS } = await import("../extension/lib/settings.js");
-  const r = await runAgent({ settings: { ...DEFAULTS, apiKey: "k", maxSteps: 3 }, history: [], userContent: [{ type: "text", text: "hoi" }], ctx: { getTabId: () => 1, setTabId() {}, windowId: 1 } });
+  const { DEFAULTS, OPENROUTER_BASE_URL } = await import("../extension/lib/settings.js");
+  // Expliciet een cloudmodel: de standaardinstelling is inmiddels het eigen,
+  // lokale model en dat krijgt bewust géén gereedschapslijst.
+  const cloud = { ...DEFAULTS, baseUrl: OPENROUTER_BASE_URL, model: "qwen/qwen3.8-27b:free" };
+  const r = await runAgent({ settings: { ...cloud, apiKey: "k", maxSteps: 3 }, history: [], userContent: [{ type: "text", text: "hoi" }], ctx: { getTabId: () => 1, setTabId() {}, windowId: 1 } });
   assert.equal(r.steps, 3);
   assert.equal(bodies[2].tool_choice, "none");
   assert.equal(r.content, "klaar");
+});
+
+await test("eigen AI: korte systeemprompt, geen gereedschappen, en wél als je het aanzet", async () => {
+  const { runAgent } = await import("../extension/sidepanel/agent.js");
+  const { DEFAULTS, usesOwnModel, isOwnModelProvider, effectivePageChars } = await import("../extension/lib/settings.js");
+
+  // De standaardinstelling ís het eigen model.
+  assert.ok(usesOwnModel(DEFAULTS), "DEFAULTS moet het eigen model zijn");
+  assert.ok(isOwnModelProvider({ baseUrl: DEFAULTS.baseUrl, model: DEFAULTS.model }));
+
+  // Een willekeurige lokale server is níét het eigen model (Ollama, LM Studio, test-double).
+  assert.ok(!isOwnModelProvider({ baseUrl: "http://localhost:11434/v1", model: "qwen2.5vl:7b" }), "Ollama is geen eigen model");
+  assert.ok(!isOwnModelProvider({ baseUrl: "http://localhost:9999/v1", model: "mijn-test-model" }), "andere lokale server is geen eigen model");
+  assert.ok(!isOwnModelProvider({ baseUrl: "https://openrouter.ai/api/v1", model: "webai" }), "cloud is nooit eigen model");
+
+  // Pagina-tekst wordt ingeperkt voor de korte context van een klein model.
+  assert.ok(effectivePageChars(DEFAULTS) <= DEFAULTS.localPageChars, "eigen AI krijgt minder paginatekst");
+  assert.equal(effectivePageChars({ ...DEFAULTS, baseUrl: "https://openrouter.ai/api/v1", model: "m" }), DEFAULTS.pageChars);
+
+  // Standaard: geen gereedschappen en een korte systeemprompt.
+  let bodies = [];
+  let p = makePage();
+  installGlobals(p, (step, body) => { bodies.push(body); return textChunks("antwoord van je eigen AI"); });
+  await runAgent({ settings: { ...DEFAULTS }, history: [], userContent: [{ type: "text", text: "hoi" }], ctx: { getTabId: () => 1, setTabId() {}, windowId: 1, tabTitle: "Toets" } });
+  assert.equal(bodies.length, 1);
+  assert.equal(bodies[0].tools, undefined, "eigen AI krijgt standaard geen gereedschapslijst");
+  assert.equal(bodies[0].tool_choice, undefined);
+  const systemOwn = bodies[0].messages[0];
+  assert.equal(systemOwn.role, "system");
+  assert.ok(systemOwn.content.length < 600, `systeemprompt moet kort zijn, was ${systemOwn.content.length} tekens`);
+  assert.match(systemOwn.content, /Toets/, "de open pagina staat in de korte prompt");
+
+  // Zet je gereedschappen aan, dan gaan ze wél mee.
+  bodies = [];
+  p = makePage();
+  installGlobals(p, (step, body) => { bodies.push(body); return textChunks("klaar"); });
+  await runAgent({ settings: { ...DEFAULTS, localUseTools: true }, history: [], userContent: [{ type: "text", text: "hoi" }], ctx: { getTabId: () => 1, setTabId() {}, windowId: 1 } });
+  assert.ok(Array.isArray(bodies[0].tools) && bodies[0].tools.length > 0, "met localUseTools horen er gereedschappen mee te gaan");
+  assert.equal(bodies[0].tool_choice, "auto");
+});
+
+await test("eigen AI niet bereikbaar → duidelijke fout met startinstructies, en reserve neemt over", async () => {
+  const { streamChat } = await import("../extension/lib/openrouter.js");
+
+  // fetch gooit een TypeError als er niemand luistert; dat moet een nette ApiError worden.
+  // Eerdere tests hebben globalThis.fetch vervangen door een mock. Zet de echte
+  // heel even terug: hier moet juist een echte verbindingsfout ontstaan.
+  // Poort 1: daar luistert niemand, ook niet als de AI-server toevallig draait.
+  const mock = globalThis.fetch;
+  globalThis.fetch = REAL_FETCH;
+  try {
+    await assert.rejects(
+      streamChat({ baseUrl: "http://localhost:1/v1", apiKey: "", body: { model: "webai", messages: [] } }),
+      (e) => e.name === "ApiError" && e.kind === "unreachable" && e.transient === true
+        && /python -m webai serve/.test(e.message),
+      "onbereikbare eigen AI moet uitleggen hoe je hem start",
+    );
+  } finally {
+    globalThis.fetch = mock;
+  }
+});
+
+await test("eigen AI: lokale aanbieder heeft geen sleutel nodig, cloud wél", async () => {
+  const { primaryProvider, DEFAULTS, usesOwnModel } =
+    await import("../extension/lib/settings.js");
+
+  // Het zijpaneel beslist hiermee of het instelscherm ("plak je sleutel") verschijnt.
+  // Voor een lokaal model is er geen sleutel, dus dat scherm zou daar weg moeten blijven.
+  const eigen = primaryProvider({ ...DEFAULTS });
+  assert.equal(eigen.local, true, "standaardaanbieder is het eigen model → lokaal");
+  assert.equal(eigen.name, "Eigen AI (lokaal)");
+  assert.equal(usesOwnModel({ ...DEFAULTS }), true);
+
+  const ollama = primaryProvider({ baseUrl: "http://localhost:11434/v1", model: "gemma3:12b" });
+  assert.equal(ollama.local, true, "Ollama is ook lokaal en heeft geen sleutel nodig");
+  assert.equal(ollama.name, "Ollama");
+  assert.equal(usesOwnModel({ baseUrl: "http://localhost:11434/v1", model: "gemma3:12b" }), false,
+    "Ollama is lokaal maar níét het eigen getrainde model");
+
+  const cloud = primaryProvider({ ...DEFAULTS, ...CLOUD });
+  assert.equal(cloud.local, false, "OpenRouter is geen lokale aanbieder");
+  assert.equal(cloud.name, "OpenRouter");
+  assert.equal(usesOwnModel({ ...DEFAULTS, ...CLOUD }), false);
+
+  // De regel die het zijpaneel gebruikt: geen sleutel + niet lokaal = instelscherm tonen.
+  const moetSleutelVragen = (s) => !s.apiKey && !primaryProvider(s).local;
+  assert.equal(moetSleutelVragen({ ...DEFAULTS }), false,
+    "eigen model zonder sleutel → géén instelscherm");
+  assert.equal(moetSleutelVragen({ ...DEFAULTS, ...CLOUD }), true,
+    "cloud zonder sleutel → wél instelscherm");
+  assert.equal(moetSleutelVragen({ ...DEFAULTS, ...CLOUD, apiKey: "sk-or-v1-x" }), false);
+});
+
+await test("eigen AI: ping() vertelt of de server draait", async () => {
+  const { ping } = await import("../extension/lib/localai.js");
+
+  // Een server die bestaat: de test doet alsof via een nepsleutel-achtige stub.
+  const origineel = REAL_FETCH;
+  globalThis.fetch = async (url) => {
+    assert.match(String(url), /\/info$/);
+    return new Response(JSON.stringify({
+      loaded: true, params: 675444, step: 250, loss: 0.76, eval_loss: 3.30,
+      context: 512, vocab: 1652,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  try {
+    const ok = await ping("http://localhost:8787");
+    assert.equal(ok.ok, true);
+    assert.equal(ok.loaded, true);
+    assert.equal(ok.info.params, 675444);
+  } finally {
+    globalThis.fetch = origineel;
+  }
+
+  // Een server die er niet is → ok:false of een nette fout, nooit een crash.
+  globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+  try {
+    const weg = await ping("http://localhost:1").catch(() => ({ ok: false }));
+    assert.equal(weg.ok, false);
+  } finally {
+    globalThis.fetch = origineel;
+  }
 });
 
 await test("render: markdown + wiskunde worden veilig gerenderd", async () => {

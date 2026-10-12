@@ -26,13 +26,26 @@ jobs:
           node-version: 22
           cache: npm
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Afhankelijkheden (alleen voor lint/tests)
         run: npm ci
 
-      - name: Controles en tests
+      - name: NumPy voor de tests van het eigen AI-model
+        run: python -m pip install --upgrade pip && pip install -r ai/requirements.txt
+
+      - name: Controles en tests (extensie)
         run: |
           node scripts/check.mjs
           node test/e2e.mjs
+
+      # Het eigen AI-model in ai/ is een los onderdeel, dus het krijgt eigen tests:
+      # gradcheck van de handgeschreven backprop, tokenizer, dataset, trainingslus,
+      # feedback en een echte HTTP-server op een vrije poort.
+      - name: Tests (eigen AI-model)
+        run: node scripts/test-ai.mjs
 
       - name: Versie in manifest moet bij de tag passen
         if: startsWith(github.ref, 'refs/tags/v')

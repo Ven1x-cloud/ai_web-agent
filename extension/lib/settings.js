@@ -1,6 +1,13 @@
 // Instellingen (chrome.storage.local) + curated modellenlijst.
+//
+// Standaard is het brein het EIGEN model uit de map ai/ (los van de extensie,
+// zelf te trainen). Cloud-aanbieders staan klaar als reserve: die kun je
+// aanzetten zodra je meer rekenkracht of betere antwoorden wilt.
 
-export const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
+import { LOCAL_AI_BASE, LOCAL_AI_MODEL, isLocalAi } from "./localai.js";
+
+export const DEFAULT_BASE_URL = LOCAL_AI_BASE;
+export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 // Modellen die zowel afbeeldingen (vision) als tools ondersteunen op OpenRouter.
 // "free" = gratis variant (met daglimiet: 50 verzoeken/dag zonder tegoed, 1000/dag na eenmalig $10 tegoed).
@@ -20,18 +27,21 @@ export const CURATED_MODELS = [
 // Let op: meerdere OpenRouter-accounts is verboden in hun voorwaarden en extra sleutels binnen één account delen
 // dezelfde 50/dag. Andere diensten hebben hun eigen limiet – dat is wél toegestaan.
 export const PROVIDER_PRESETS = [
+  { id: "webai", name: "Eigen AI (lokaal, zelf te trainen)", baseUrl: LOCAL_AI_BASE, model: LOCAL_AI_MODEL, apiKey: "", keysUrl: "", note: "Jouw eigen model uit de map ai/. Start de server met `cd ai && python -m webai serve`. Geen sleutel nodig, geen daglimiet, alles blijft op je eigen computer." },
+  { id: "ollama", name: "Ollama (open model op je eigen pc)", baseUrl: "http://localhost:11434/v1", model: "qwen2.5vl:7b", apiKey: "ollama", keysUrl: "https://ollama.com/download", note: "Onbeperkt en gratis. Start Ollama met OLLAMA_ORIGINS=chrome-extension://* en haal een model met `ollama pull qwen2.5vl:7b`." },
+  { id: "openrouter", name: "OpenRouter (cloud, gratis modellen)", baseUrl: OPENROUTER_BASE_URL, model: "qwen/qwen3.8-27b:free", apiKey: "", keysUrl: "https://openrouter.ai/settings/keys", note: "Veel slimmer dan een klein eigen model, maar 50 vragen per dag gratis en je hebt een account nodig (18+)." },
   { id: "google", name: "Google AI Studio (Gemini)", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-3.8-flash", keysUrl: "https://aistudio.google.com/apikey", note: "Gratis tier met eigen daglimiet (reset om 09:00 NL-tijd). Controleer de modelnaam op aistudio.google.com." },
   { id: "groq", name: "Groq", baseUrl: "https://api.groq.com/openai/v1", model: "qwen/qwen3.8-27b", keysUrl: "https://console.groq.com/keys", note: "Gratis tier met eigen limieten; kies een model met afbeeldingen + tools uit hun lijst." },
   { id: "mistral", name: "Mistral", baseUrl: "https://api.mistral.ai/v1", model: "mistral-small-latest", keysUrl: "https://console.mistral.ai/api-keys", note: "Gratis 'Experiment'-tier (telefoonverificatie nodig)." },
-  { id: "ollama", name: "Ollama (op je eigen pc)", baseUrl: "http://localhost:11434/v1", model: "qwen2.5vl:7b", apiKey: "ollama", keysUrl: "https://ollama.com/download", note: "Onbeperkt en gratis. Start Ollama met OLLAMA_ORIGINS=chrome-extension://* en haal een model met `ollama pull qwen2.5vl:7b`." },
   { id: "custom", name: "Anders (OpenAI-compatibel)", baseUrl: "", model: "", keysUrl: "", note: "Elke server met een OpenAI-compatibele /chat/completions die afbeeldingen en tools ondersteunt." },
 ];
 
 export const DEFAULTS = {
   apiKey: "",
   baseUrl: DEFAULT_BASE_URL,
-  model: "qwen/qwen3.8-27b:free",
-  fallbackModels: "qwen/qwen3.8-27b:free, google/gemma-4-31b-it:free, thinkingmachines/inkling:free", // het hoofdmodel zelf wordt overgeslagen
+  model: LOCAL_AI_MODEL,
+  // Het hoofdmodel zelf wordt overgeslagen; dit is de wolk-terugval als je die aanzet.
+  fallbackModels: "",
   searchProvider: "duckduckgo", // "duckduckgo" | "openrouter" | "off"
   answerLanguage: "auto", // "auto" | "nl" | "en" | "fr" | "de"
   reasoning: "low", // "auto" | "low" | "medium" | "high" — laag = snel; hoog voor moeilijke wiskunde
@@ -45,6 +55,14 @@ export const DEFAULTS = {
   schoolLevel: "", // bijv. "3 havo", "5 vwo" — helpt bij het niveau van de uitleg
   onboarded: false,
   providers: [], // reserve-aanbieders: [{ id, preset, name, baseUrl, apiKey, model, enabled }]
+  // Feedback op antwoorden naar de eigen AI-server sturen, zodat het model leert.
+  sendFeedback: true,
+  // Pagina-inhoud beperken voor het eigen model: een klein model heeft een korte context.
+  localPageChars: 1800,
+  // Gereedschappen (pagina lezen, zoeken, klikken) ook aan je eigen model geven.
+  // Uit is het verstandige begin: de gereedschapslijst kost veel van de korte
+  // context en een klein model kan nog niet betrouwbaar JSON-aanroepen maken.
+  localUseTools: false,
 };
 
 export async function loadSettings() {
@@ -85,18 +103,75 @@ export function providerKey(p) {
 export function primaryProvider(settings) {
   return {
     id: "primary",
-    name: /openrouter\.ai/.test(settings.baseUrl || "") ? "OpenRouter" : /localhost|127\.0\.0\.1/.test(settings.baseUrl || "") ? "Lokaal model" : "Hoofdaanbieder",
+    name: providerName(settings.baseUrl),
     baseUrl: settings.baseUrl,
     apiKey: settings.apiKey,
     model: settings.model,
     fallbackModels: settings.fallbackModels,
     enabled: true,
+    local: isLocalAi(settings.baseUrl),
   };
+}
+
+/** Leesbare naam bij een API-adres. */
+export function providerName(baseUrl) {
+  const url = String(baseUrl || "");
+  if (/openrouter\.ai/.test(url)) return "OpenRouter";
+  if (/googleapis\.com/.test(url)) return "Google AI Studio";
+  if (/groq\.com/.test(url)) return "Groq";
+  if (/mistral\.ai/.test(url)) return "Mistral";
+  if (/:11434/.test(url)) return "Ollama";
+  if (isLocalAi(url)) return "Eigen AI (lokaal)";
+  return url ? "Hoofdaanbieder" : "Geen aanbieder";
+}
+
+/**
+ * Hoeveel tekens van de pagina er meegaan in de vraag.
+ *
+ * Een klein, zelf getraind model heeft een korte context (vaak 256–512 tokens).
+ * Stuur je daar 6000 tekens pagina naartoe, dan is de context vol voordat het
+ * kan antwoorden. Daarom geldt voor de eigen AI een lagere grens.
+ */
+export function effectivePageChars(settings) {
+  const base = Number(settings.pageChars) || 6000;
+  if (usesOwnModel(settings)) {
+    const local = Number(settings.localPageChars) || 1800;
+    return Math.max(300, Math.min(base, local));
+  }
+  return base;
+}
+
+/**
+ * Model-ID's van het eigen model. De server in ai/ meldt zich altijd als
+ * `webai`, ongeacht de run-naam — dat is het kenmerk.
+ */
+export const OWN_MODEL_IDS = ["webai"];
+
+/**
+ * Is deze aanbieder je eigen, lokaal getrainde model?
+ *
+ * Bewust eng gehouden: een willekeurige lokale server (Ollama, LM Studio, een
+ * test-double) is níét je eigen model. Alleen lokaal + model-ID `webai` telt.
+ * Dat verschil is belangrijk, want het eigen model krijgt een korte
+ * systeemprompt en standaard geen gereedschapslijst.
+ */
+export function isOwnModelProvider(p) {
+  const url = String(p?.baseUrl || "");
+  if (!isLocalAi(url) || /:11434/.test(url)) return false;
+  const first = String(p?.model || "").split(",")[0].trim().toLowerCase();
+  if (!first) return false;
+  return OWN_MODEL_IDS.some((id) => first === id || first.startsWith(id + "/") || first.startsWith(id + ":"));
+}
+
+/** Draait het brein nu op je eigen, lokale model? */
+export function usesOwnModel(settings) {
+  return isOwnModelProvider({ baseUrl: settings?.baseUrl, model: settings?.model });
 }
 
 function providerUsable(p) {
   if (!p || p.enabled === false || !p.baseUrl || !p.model) return false;
-  return !!p.apiKey || /localhost|127\.0\.0\.1/.test(p.baseUrl);
+  // Een lokale server (eigen AI, Ollama) heeft geen sleutel nodig.
+  return !!p.apiKey || isLocalAi(p.baseUrl);
 }
 
 /** Hoofdaanbieder + bruikbare reserve-aanbieders, in volgorde. */

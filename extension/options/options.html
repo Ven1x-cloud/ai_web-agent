@@ -18,29 +18,69 @@
 
   <main>
     <section class="card">
-      <h2>1. Verbinding met OpenRouter</h2>
-      <p class="muted">De agent gebruikt <a href="https://openrouter.ai" target="_blank" rel="noopener">OpenRouter</a> om met AI-modellen te praten. Maak een account, ga naar <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener">Keys</a>, maak een sleutel en plak die hier. Met een gratis model kost dit <strong>niets</strong> (50 vragen per dag; 1000 per dag als er ooit eenmalig $10 tegoed is gekocht).</p>
+      <h2>1. Je eigen AI (lokaal en zelf te trainen)</h2>
+      <p class="muted">Het brein van deze agent staat <strong>los van de extensie</strong>, in de map <code>ai/</code> van deze repository. Dat is een echt, zelfgeschreven taalmodel dat jij traint op jouw eigen data — geen abonnement, geen daglimiet, en niets verlaat je computer.</p>
+
+      <div class="row wrap" style="align-items:center">
+        <strong id="aiState">Status controleren…</strong>
+        <button type="button" class="ghost" id="aiRefresh">Verversen</button>
+        <button type="button" id="aiTrain">Train verder</button>
+        <a class="ghost btnlink" id="aiPlayground" href="http://localhost:8787/" target="_blank" rel="noopener">Test-paneel openen ↗</a>
+      </div>
+      <p class="status" id="aiStatus"></p>
+      <p class="muted small" id="aiModel">—</p>
+      <p class="muted small" id="aiAdvice"></p>
+
+      <details>
+        <summary>Hoe start en train je het? (terminal, één keer)</summary>
+        <p class="muted small">Python 3.9 of nieuwer is genoeg; de enige afhankelijkheid is <code>numpy</code>.</p>
+        <pre class="code">cd ai
+python -m pip install -r requirements.txt
+
+python -m webai build            # eigen woordenboek leren uit ai/data
+python -m webai train --preset tiny   # eerste model (minuten op een laptop)
+python -m webai serve            # server op http://localhost:8787</pre>
+        <p class="muted small">Daarna werkt dit paneel meteen. Laat <code>serve</code> draaien zolang je de agent gebruikt.</p>
+        <p class="muted small"><strong>Beter worden?</strong> Zet eigen tekst in <code>ai/data/learned/</code> (<code>.txt</code>, <code>.md</code> of <code>.jsonl</code> met gesprekken) en train opnieuw. Of laat een cloudmodel voorbeelden maken met <code>python -m webai distill</code> en train dáárop — dat is de snelste manier om een klein eigen model bruikbaar te krijgen.</p>
+      </details>
+
+      <h3 class="sub">Wat mag je eigen AI?</h3>
+      <label class="inline"><input type="checkbox" id="sendFeedback"> Knoppen 👍 👎 ✏️ onder elk antwoord tonen, zodat je AI leert van wat jij ervan vindt</label>
+      <label class="inline"><input type="checkbox" id="localUseTools"> Je eigen AI ook gereedschappen geven (pagina lezen, zoeken, klikken)</label>
+      <p class="muted small">Gereedschappen staan standaard <em>uit</em> bij het eigen model: de lijst met gereedschappen kost veel van de korte context, en een klein model maakt nog geen betrouwbare JSON-aanroepen. Zet het aan zodra je een groter model hebt getraind.</p>
+      <label class="field">
+        <span>Max. tekens paginatekst bij het eigen model</span>
+        <input type="number" id="localPageChars" min="300" max="8000" step="100">
+      </label>
+      <p class="muted small">Een klein model heeft een korte context. Minder paginatekst = meer ruimte om te antwoorden.</p>
+    </section>
+
+    <section class="card">
+      <h2>2. Verbinding met een aanbieder</h2>
+      <p class="muted">Liever een groot model uit de cloud (veel slimmer dan een klein eigen model)? Vul hier een sleutel in. <a href="https://openrouter.ai" target="_blank" rel="noopener">OpenRouter</a> heeft gratis modellen: account aanmaken, naar <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener">Keys</a>, sleutel plakken. Zonder tegoed: 50 vragen per dag; met eenmalig $10 tegoed: 1000 per dag.</p>
+      <label class="field">
+        <span>API-basis-URL</span>
+        <input type="text" id="baseUrl" placeholder="http://localhost:8787/v1">
+      </label>
+      <div class="row wrap">
+        <button type="button" class="ghost" id="useOwn">Gebruik mijn eigen AI</button>
+        <button type="button" class="ghost" id="useOpenRouter">Gebruik OpenRouter (cloud)</button>
+        <button type="button" class="ghost" id="useOllama">Gebruik Ollama (open model)</button>
+      </div>
       <label class="field">
         <span>API-sleutel</span>
         <span class="row">
-          <input type="password" id="apiKey" placeholder="sk-or-v1-…" autocomplete="off" spellcheck="false">
+          <input type="password" id="apiKey" placeholder="sk-or-v1-… (niet nodig voor je eigen AI)" autocomplete="off" spellcheck="false">
           <button type="button" class="ghost" id="toggleKey" title="Tonen/verbergen">👁</button>
           <button type="button" id="testKey">Test verbinding</button>
         </span>
       </label>
       <p class="status" id="keyStatus"></p>
-      <details>
-        <summary>Geavanceerd: andere server (bijv. Ollama / LM Studio op je eigen pc)</summary>
-        <label class="field">
-          <span>API-basis-URL</span>
-          <input type="text" id="baseUrl" placeholder="https://openrouter.ai/api/v1">
-        </label>
-        <p class="muted small">Voor een lokaal model met Ollama: installeer <a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a>, start het met <code>OLLAMA_ORIGINS="chrome-extension://*" ollama serve</code>, haal een vision-model op (bijv. <code>ollama pull gemma3:12b</code> of <code>qwen2.5vl:7b</code>), vul hier <code>http://localhost:11434/v1</code> in en typ de modelnaam hieronder bij “Eigen model-ID”. Een API-sleutel is dan niet nodig (vul iets in, bijv. <code>ollama</code>). Let op: lokale modellen zijn trager en minder slim dan de online modellen, en internet zoeken werkt dan alleen via DuckDuckGo.</p>
-      </details>
+      <p class="muted small">Voor Ollama: installeer <a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a>, start het met <code>OLLAMA_ORIGINS="chrome-extension://*" ollama serve</code> en haal een model op (<code>ollama pull gemma3:12b</code>).</p>
     </section>
 
     <section class="card">
-      <h2>2. Model</h2>
+      <h2>3. Model</h2>
       <label class="field">
         <span>Model</span>
         <select id="model"></select>
@@ -51,24 +91,24 @@
       </div>
       <label class="field">
         <span>Eigen model-ID (optioneel, overschrijft de keuze hierboven)</span>
-        <input type="text" id="customModel" placeholder="bijv. google/gemini-3.5-flash of llama3.2-vision">
+        <input type="text" id="customModel" placeholder="bijv. webai, google/gemini-3.5-flash of llama3.2-vision">
       </label>
       <label class="field">
         <span>Reserve-modellen (komma-gescheiden). Als het eerste model overbelast is (fout 429 “Provider returned error”) of offline, schakelt de agent na een korte pauze automatisch over naar het volgende.</span>
-        <input type="text" id="fallbackModels" placeholder="qwen/qwen3.8-27b:free, google/gemma-4-31b-it:free, thinkingmachines/inkling:free">
+        <input type="text" id="fallbackModels" placeholder="laat leeg bij je eigen AI">
       </label>
-      <p class="muted small">Tip: gratis modellen zijn soms druk of traag. Met tegoed is <strong>google/gemini-3.5-flash</strong> een sterke, goedkope keuze (ongeveer $0,75 per miljoen invoertekens; een gemiddelde vraag met pagina kost minder dan een cent).</p>
+      <p class="muted small">Tip: gratis cloudmodellen zijn soms druk of traag. Met tegoed is <strong>google/gemini-3.5-flash</strong> een sterke, goedkope keuze (ongeveer $0,75 per miljoen invoertekens; een gemiddelde vraag met pagina kost minder dan een cent).</p>
     </section>
 
     <section class="card">
-      <h2>3. Zoeken op internet</h2>
-      <label class="radio"><input type="radio" name="searchProvider" value="duckduckgo"> <span><strong>DuckDuckGo</strong> in je eigen browser — gratis, geen tegoed nodig (aanbevolen zonder tegoed)</span></label>
+      <h2>4. Zoeken op internet</h2>
+      <label class="radio"><input type="radio" name="searchProvider" value="duckduckgo"> <span><strong>DuckDuckGo</strong> in je eigen browser — gratis, geen tegoed nodig (aanbevolen)</span></label>
       <label class="radio"><input type="radio" name="searchProvider" value="openrouter"> <span><strong>OpenRouter web search</strong> — betere resultaten, kost ongeveer $0,007 per zoekopdracht van je tegoed</span></label>
       <label class="radio"><input type="radio" name="searchProvider" value="off"> <span>Uit — nooit op internet zoeken</span></label>
     </section>
 
     <section class="card">
-      <h2>4. Antwoorden</h2>
+      <h2>5. Antwoorden</h2>
       <div class="grid">
         <label class="field">
           <span>Antwoordtaal</span>
@@ -102,12 +142,12 @@
     </section>
 
     <section class="card">
-      <h2>5. Wat mag de agent?</h2>
+      <h2>6. Wat mag de agent?</h2>
       <label class="inline"><input type="checkbox" id="allowActions"> Op de pagina klikken, typen, scrollen en naar andere pagina's gaan (voor irreversibele acties vraagt hij eerst)</label>
       <label class="inline"><input type="checkbox" id="includePage"> Tekst van de huidige pagina standaard meesturen met elke vraag</label>
       <div class="grid">
         <label class="field">
-          <span>Max. tekens paginatekst per vraag</span>
+          <span>Max. tekens paginatekst per vraag (cloudmodellen)</span>
           <input type="number" id="pageChars" min="1000" max="30000" step="500">
         </label>
         <label class="field">
@@ -115,12 +155,13 @@
           <input type="number" id="maxSteps" min="1" max="25" step="1">
         </label>
       </div>
-      <p class="muted small">Elke stap is één verzoek aan het model. Bij gratis modellen tellen die mee voor de daglimiet (50). Minder tekens en stappen = goedkoper en sneller.</p>
+      <p class="muted small">Elke stap is één verzoek aan het model. Bij gratis cloudmodellen tellen die mee voor de daglimiet (50). Minder tekens en stappen = goedkoper en sneller.</p>
     </section>
 
     <section class="card">
-      <h2>6. Reserve-aanbieders — meer vragen per dag</h2>
-      <p class="muted">Is de daglimiet van je hoofdaanbieder op (bij OpenRouter: 50 gratis vragen), dan schakelt de agent automatisch over naar de eerstvolgende aanbieder hieronder. Het gesprek blijft gewoon bewaard, want dat zit in de extensie en niet bij de sleutel. Elke dienst heeft zijn eigen gratis limiet, dus samen kom je een stuk verder.</p>
+      <h2>7. Reserve-aanbieders — nooit zonder antwoord</h2>
+      <p class="muted">Is de hoofdaanbieder niet bereikbaar of is de daglimiet op, dan schakelt de agent automatisch over naar de eerstvolgende aanbieder hieronder. Het gesprek blijft gewoon bewaard, want dat zit in de extensie en niet bij de sleutel.</p>
+      <p class="muted small">Handige combinatie: <strong>je eigen AI als hoofdaanbieder</strong> (onbeperkt, privé, zelf te trainen) en een <strong>cloudmodel als reserve</strong> voor de vragen waar je eigen model nog te klein voor is.</p>
       <p class="muted small"><strong>Let op:</strong> extra sleutels van hetzelfde OpenRouter-account geven géén extra vragen (de limiet geldt per account), en meerdere OpenRouter-accounts maken is verboden in hun voorwaarden. Voeg dus <em>andere</em> diensten toe. Voor deze accounts geldt meestal ook 18+ — vraag een ouder als je jonger bent.</p>
       <div id="providers"></div>
       <div class="row" style="margin-top:10px">
@@ -131,8 +172,8 @@
     </section>
 
     <section class="card">
-      <h2>7. Gegevens</h2>
-      <p class="muted">Gesprekken worden alleen lokaal in je browser bewaard. Je API-sleutel blijft op dit apparaat.</p>
+      <h2>8. Gegevens</h2>
+      <p class="muted">Gesprekken worden alleen lokaal in je browser bewaard. Je API-sleutel blijft op dit apparaat. Feedback die je geeft met 👍 👎 ✏️ gaat alleen naar je eigen AI-server op <code>localhost</code> en wordt bewaard in <code>ai/data/feedback.jsonl</code>.</p>
       <button type="button" class="danger" id="clearHistory">Alle gesprekken wissen</button>
       <span class="status" id="clearStatus"></span>
     </section>
@@ -145,6 +186,7 @@
         <li>Selecteer tekst op een pagina → rechtermuisknop → “Vraag AI Web Agent”. Of rechtermuisknop op een afbeelding → “Afbeelding bekijken met AI Web Agent”.</li>
         <li>Plak (Ctrl+V) of sleep een foto van je huiswerk in het paneel, of klik 📷 om een screenshot mee te sturen.</li>
         <li>Wissel van tabblad: het paneel volgt automatisch de actieve website.</li>
+        <li>Vind je een antwoord goed of slecht? Gebruik 👍 👎 ✏️ — daarmee leer je je eigen AI bij.</li>
       </ul>
     </section>
   </main>

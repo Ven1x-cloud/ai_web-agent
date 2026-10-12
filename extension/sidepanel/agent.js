@@ -2,7 +2,7 @@
 import { streamChat, ApiError } from "../lib/openrouter.js";
 import { buildSystemPrompt, PAGE_CTX_START, PAGE_CTX_END } from "../lib/prompts.js";
 import { buildTools, executeTool, describeToolCall } from "./tools.js";
-import { parseModelList, providerChain, providerKey, isExhausted, nextResetMs } from "../lib/settings.js";
+import { parseModelList, providerChain, providerKey, isExhausted, nextResetMs, isOwnModelProvider } from "../lib/settings.js";
 
 /** Maakt oudere berichten compact (geen oude pagina-snapshots/afbeeldingen meesturen). */
 export function compactHistory(messages, { keepRecentUsers = 0, maxMessages = 40 } = {}) {
@@ -83,10 +83,12 @@ function toApiMessages(messages) {
  * @returns {Promise<{messages:Array, content:string, cost:number, model:string, provider:string, providerId:string, steps:number, truncated:boolean}>}  messages = nieuwe assistant/tool-berichten (zonder het user-bericht)
  */
 export async function runAgent({ settings, history, userContent, ctx, ui = {}, signal, retryDelays = DEFAULT_RETRY_DELAYS, providerState = {} }) {
-  const system = { role: "system", content: buildSystemPrompt(settings, { tabTitle: ctx.tabTitle, tabUrl: ctx.tabUrl }) };
   const newMessages = [{ role: "user", content: userContent }];
   let cost = 0, usedModel = "", steps = 0, finalContent = "", truncated = false;
   const maxSteps = Math.max(1, Math.min(25, Number(settings.maxSteps) || 10));
+  // `system` en `tools` hangen af van welke aanbieder er aan de beurt is:
+  // een klein eigen model heeft een korte context en krijgt dus een korte prompt.
+  let system = null;
 
   // Aanbieders: hoofdaanbieder eerst, dan reserve-aanbieders; wie vandaag "op" is wordt overgeslagen.
   // Het gesprek zit in `messages` (in de extensie), dus bij een wissel vergeet de AI niets.
@@ -98,11 +100,21 @@ export async function runAgent({ settings, history, userContent, ctx, ui = {}, s
   const useProvider = (p) => {
     provider = p;
     isOpenRouter = /openrouter\.ai/.test(p.baseUrl || "");
+    const isOwn = isOwnModelProvider(p);
     // Kandidaat-modellen: het gekozen model eerst, dan de reserve-modellen. Bij drukte (429/5xx) schuift de lijst door.
     candidates = [...new Set([...parseModelList(p.model), ...parseModelList(p.fallbackModels)].filter(Boolean))];
     // De server-side zoektool bestaat alleen bij OpenRouter; elders valt hij terug op DuckDuckGo.
     const searchProvider = settings.searchProvider === "openrouter" && !isOpenRouter ? "duckduckgo" : settings.searchProvider;
-    tools = buildTools({ ...settings, baseUrl: p.baseUrl, searchProvider });
+    // Je eigen model heeft een korte context: een lange systeemprompt plus een
+    // gereedschapslijst vult die meteen op. Daarom een korte prompt, en tools
+    // alleen als je ze expliciet aan hebt gezet.
+    system = {
+      role: "system",
+      content: buildSystemPrompt(settings, { tabTitle: ctx.tabTitle, tabUrl: ctx.tabUrl }, { compact: isOwn }),
+    };
+    tools = (isOwn && !settings.localUseTools)
+      ? []
+      : buildTools({ ...settings, baseUrl: p.baseUrl, searchProvider });
   };
   useProvider(provider);
   if (provider.id !== "primary") ui.onProvider?.({ from: chain[0], to: provider, reason: "exhausted", error: null });
@@ -142,7 +154,10 @@ export async function runAgent({ settings, history, userContent, ctx, ui = {}, s
     let attempt = 0;
     let minimalBody = false; // na een 400: zonder reasoning/models/usage/temperature
     while (true) {
-      const body = { model: candidates[0], messages, tools, tool_choice: steps === maxSteps ? "none" : "auto" };
+      const body = { model: candidates[0], messages };
+      // Zonder gereedschappen hoeft tool_choice niet mee (sommige servers
+      // weigeren een lege lijst; het eigen model negeert hem toch).
+      if (tools.length) body.tools = tools, body.tool_choice = steps === maxSteps ? "none" : "auto";
       if (!minimalBody) {
         body.temperature = Number.isFinite(Number(settings.temperature)) ? Number(settings.temperature) : 0.4;
         if (isOpenRouter) {
