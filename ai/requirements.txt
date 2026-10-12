@@ -1,0 +1,15 @@
+# Wat het eigen AI-model nodig heeft.
+#
+#   python -m venv .venv
+#   .venv/bin/pip install -r ai/requirements.txt
+#
+# Opzettelijk klein gehouden: het hele model draait op NumPy en de
+# standaardbibliotheek van Python. Geen PyTorch of TensorFlow, dus geen
+# installatie van meerdere gigabytes en niets dat op je videokaart moet passen.
+
+numpy>=1.24
+
+# Optioneel, alleen voor wie het model sneller wil trainen dan met NumPy.
+# De code heeft er geen harde afhankelijkheid van; zonder deze pakketten
+# werkt alles precies hetzelfde, alleen langzamer.
+# torch>=2.0
